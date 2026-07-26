@@ -15,7 +15,7 @@ A minimal, self-contained web server built on [Hyper](https://hyper.rs/), [rustl
 - **Column-aligned, buffered request logging** — logs are collected and flushed once per second, showing protocol, method, path, status, size, and response time in microseconds
 - **Summary logging mode** — run with `--summary` for a lightweight req/s counter updated every 5 seconds (ideal for benchmarks)
 - **SO_REUSEPORT** — one TCP listener and one QUIC endpoint per worker; the kernel distributes connections across CPU cores with no accept-queue bottleneck and no shared locks
-- **Security headers** — every response includes a strong set of HTTP security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, etc.) with SRI hashes on `<script>` and `<link>` tags
+- **Security headers** — every response includes a strong set of HTTP security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, etc.) with SRI hashes on `<script>` and `<link>` tags.
 
 ## How It Works
 

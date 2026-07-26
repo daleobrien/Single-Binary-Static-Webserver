@@ -47,13 +47,6 @@ pub(crate) fn spawn_quic_workers(
     let mut handles = Vec::with_capacity(num_workers);
 
     for i in 0..num_workers {
-        let udp_socket = match create_reuseport_udp_socket(port) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to create UDP socket for QUIC worker {i}: {e}");
-                continue;
-            }
-        };
         let log_mode = log_mode.clone();
         let mut shutdown_rx = shutdown_rx.clone();
 
@@ -61,21 +54,33 @@ pub(crate) fn spawn_quic_workers(
         let mut quic_server_config =
             quinn::ServerConfig::with_crypto(Arc::clone(&quic_tls));
         quic_server_config.transport_config(Arc::clone(&transport));
+        let endpoint_config = endpoint_config.clone();
+        let runtime = Arc::clone(&runtime);
 
-        let endpoint = match quinn::Endpoint::new(
-            endpoint_config.clone(),
-            Some(quic_server_config),
-            udp_socket,
-            Arc::clone(&runtime),
-        ) {
-            Ok(ep) => ep,
-            Err(e) => {
-                eprintln!("Failed to create QUIC endpoint on worker {i}: {e}");
-                continue;
-            }
-        };
-
+        // Spawn immediately so all workers create sockets and endpoints
+        // in parallel, reducing startup latency.
         let handle = tokio::spawn(async move {
+            let udp_socket = match create_reuseport_udp_socket(port) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to create UDP socket for QUIC worker {i}: {e}");
+                    return;
+                }
+            };
+
+            let endpoint = match quinn::Endpoint::new(
+                endpoint_config,
+                Some(quic_server_config),
+                udp_socket,
+                runtime,
+            ) {
+                Ok(ep) => ep,
+                Err(e) => {
+                    eprintln!("Failed to create QUIC endpoint on worker {i}: {e}");
+                    return;
+                }
+            };
+
             loop {
                 let incoming = tokio::select! {
                     result = endpoint.accept() => result,

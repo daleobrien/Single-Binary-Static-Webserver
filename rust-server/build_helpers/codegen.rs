@@ -171,6 +171,11 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
         let content_type = utils::mime_for_file(file);
         let const_prefix = utils::file_to_const(file);
         let uncompressed_len = ctx.uncompressed_lengths[i];
+        let savings_pct = if uncompressed_len > 0 {
+            (uncompressed_len - content_length) * 100 / uncompressed_len
+        } else {
+            0
+        };
 
         writeln!(
             g,
@@ -189,6 +194,7 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
         )
         .unwrap();
         writeln!(g, "const {const_prefix}_UNCOMPRESSED_LEN: usize = {uncompressed_len};").unwrap();
+        writeln!(g, "const {const_prefix}_SAVINGS_PCT: usize = {savings_pct};").unwrap();
         writeln!(g, "const {const_prefix}_TYPE: &str = \"{content_type}\";").unwrap();
         writeln!(g).unwrap();
     }
@@ -216,6 +222,17 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
         g,
         "const VERSION_UNCOMPRESSED_LEN: usize = {};",
         ctx.version_uncompressed_len
+    )
+    .unwrap();
+    let version_savings_pct = if ctx.version_uncompressed_len > 0 {
+        (ctx.version_uncompressed_len - ctx.version_len) * 100 / ctx.version_uncompressed_len
+    } else {
+        0
+    };
+    writeln!(
+        g,
+        "const VERSION_SAVINGS_PCT: usize = {};",
+        version_savings_pct
     )
     .unwrap();
     writeln!(
@@ -250,6 +267,11 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(
         g,
         "const NOT_FOUND_UNCOMPRESSED_LEN: usize = {len};",
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "const NOT_FOUND_SAVINGS_PCT: usize = 0;",
     )
     .unwrap();
     writeln!(
@@ -308,6 +330,7 @@ fn write_asset_struct(g: &mut fs::File) {
     writeln!(g, "    pub content_length: usize,").unwrap();
     writeln!(g, "    pub content_length_str: &'static str,").unwrap();
     writeln!(g, "    pub uncompressed_length: usize,").unwrap();
+    writeln!(g, "    pub savings_pct: usize,").unwrap();
     writeln!(g, "    pub content_type: &'static str,").unwrap();
     writeln!(g, "    pub status_code: u16,").unwrap();
     writeln!(g, "    header_index: usize,").unwrap();
@@ -325,6 +348,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    content_length: {p}_LEN,").unwrap();
         writeln!(g, "    content_length_str: {p}_LEN_STR,").unwrap();
         writeln!(g, "    uncompressed_length: {p}_UNCOMPRESSED_LEN,").unwrap();
+        writeln!(g, "    savings_pct: {p}_SAVINGS_PCT,").unwrap();
         writeln!(g, "    content_type: {p}_TYPE,").unwrap();
         writeln!(g, "    status_code: {sc},").unwrap();
         writeln!(g, "    header_index: {hi},").unwrap();
@@ -338,6 +362,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    content_length: VERSION_LEN,").unwrap();
     writeln!(g, "    content_length_str: VERSION_LEN_STR,").unwrap();
     writeln!(g, "    uncompressed_length: VERSION_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    savings_pct: VERSION_SAVINGS_PCT,").unwrap();
     writeln!(g, "    content_type: VERSION_TYPE,").unwrap();
     writeln!(g, "    status_code: 200,").unwrap();
     writeln!(g, "    header_index: {},", ctx.version_header_idx).unwrap();
@@ -351,6 +376,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
         writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
         writeln!(g, "    uncompressed_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
+        writeln!(g, "    savings_pct: NOT_FOUND_SAVINGS_PCT,").unwrap();
         writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
         writeln!(g, "    status_code: 404,").unwrap();
         writeln!(g, "    header_index: {},", ctx.not_found_header_idx).unwrap();

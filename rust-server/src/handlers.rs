@@ -83,11 +83,7 @@ pub(crate) async fn handle_request(
     let asset = route(&path);
     let status = asset.status_code;
     let size = asset.content_length as u64;
-    let savings = if asset.uncompressed_length > 0 {
-        ((asset.uncompressed_length - asset.content_length) * 100 / asset.uncompressed_length) as u64
-    } else {
-        0
-    };
+    let savings = asset.savings_pct as u64;
     let resp = build_response(asset);
 
     let (parts, body) = resp.into_parts();
@@ -204,11 +200,7 @@ where
                     let asset = route(&path);
                     let status_code = asset.status_code;
                     let content_length = asset.content_length;
-                    let savings = if asset.uncompressed_length > 0 {
-                        ((asset.uncompressed_length - asset.content_length) * 100 / asset.uncompressed_length) as u64
-                    } else {
-                        0
-                    };
+                    let savings = asset.savings_pct as u64;
 
                     let status = hyper::StatusCode::from_u16(asset.status_code)
                         .unwrap_or(hyper::StatusCode::OK);

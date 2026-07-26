@@ -66,6 +66,10 @@ pub fn run() {
     //     asset metadata and the 404 fallback header set. ──
     let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash);
 
+    // ── Configurable 404 filename (env var with default) ──
+    let not_found_filename =
+        std::option_env!("NOT_FOUND_FILENAME").unwrap_or("404.html");
+
     // ── Build asset metadata and header deduplication ──
     let (
         assets,
@@ -85,6 +89,7 @@ pub fn run() {
         &hashed_filenames,
         &uncompressed_lens,
         &build_version,
+        not_found_filename,
     );
 
     // ── Version asset ──

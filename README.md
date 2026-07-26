@@ -75,6 +75,28 @@ At startup, each header-builder function is called exactly once and cached in a 
 └── README.md
 ```
 
+## Environment Variables
+
+### Runtime
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `3000` | Server port (TCP and UDP) |
+| `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
+
+### Build-time
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page. E.g. `NOT_FOUND_FILENAME=not-found.html cargo build` |
+
+Build-time variables are read by `build.rs` via `std::option_env!`. They can be set in `.cargo/config.toml` for persistence:
+
+```toml
+[env]
+NOT_FOUND_FILENAME = "not-found.html"
+```
+
 ## Build & Run
 
 > **Note:** Local builds use `target.tmp` as the Cargo target directory (instead of the default `target/`) to avoid conflicts with Docker builds. The `target.tmp/` directory is gitignored.

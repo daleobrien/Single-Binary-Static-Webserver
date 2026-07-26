@@ -14,6 +14,7 @@ pub(super) fn build_asset_metadata(
     hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
     build_version: &str,
+    not_found_filename: &str,
 ) -> (
     Vec<AssetGen>,
     Vec<usize>,
@@ -48,7 +49,7 @@ pub(super) fn build_asset_metadata(
             max_path_len = max_path_len.max(path.len());
         }
 
-        let status_code = if file == "404.html" {
+        let status_code = if file == not_found_filename {
             has_404 = true;
             not_found_const_prefix = Some(const_prefix.clone());
             404

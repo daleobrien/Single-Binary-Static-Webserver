@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio_rustls::TlsAcceptor;
 
-use config::{PORT, TLS_CONTENT_TYPE_HANDSHAKE};
+use config::{PORT, SHUTDOWN_TIMEOUT_SECS, TLS_CONTENT_TYPE_HANDSHAKE};
 use logging::LogMode;
 use sockets::{create_reuseport_listener, create_reuseport_udp_socket};
 use tls_stream::PrefixedStream;
@@ -28,13 +28,16 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let port = *PORT;
+    let shutdown_timeout = Duration::from_secs(*SHUTDOWN_TIMEOUT_SECS);
+
     let num_workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
 
     let summary_mode = std::env::args().any(|arg| arg == "--summary");
 
-    eprintln!("Server running at http://localhost:{PORT}/  and  https://localhost:{PORT}/");
+    eprintln!("Server running at http://localhost:{port}/  and  https://localhost:{port}/");
     eprintln!("All static files pre-compressed and embedded at compile time.");
     eprintln!(
         "{} assets baked into the binary (routing + header builders + bodies).",
@@ -55,6 +58,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let tls_config = build_tls_config();
     let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
+
+    // ── Shutdown coordination ──────────────────────────────────────
+    // Workers select between accepting new connections and this signal.
+    // When the main task receives Ctrl+C, it sends `true` then drops
+    // the sender; every worker immediately breaks its accept loop.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     // ── Logging strategy ──────────────────────────────────────────────
     let log_mode = if summary_mode {
@@ -113,79 +122,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // TCP workers (HTTP/1.1 + HTTP/2)
     for i in 0..num_workers {
-        let listener = create_reuseport_listener(PORT)?;
+        let listener = create_reuseport_listener(port)?;
         let log_mode = log_mode.clone();
         let tls_acceptor = tls_acceptor.clone();
+        let mut shutdown_rx = shutdown_rx.clone();
 
         let handle = tokio::spawn(async move {
             loop {
-                match listener.accept().await {
-                    Ok((mut stream, addr)) => {
-                        let log_mode = log_mode.clone();
-                        let tls_acceptor = tls_acceptor.clone();
-                        tokio::task::spawn(async move {
-                            // Read first byte to detect TLS vs plain HTTP.
-                            // A TLS ClientHello always begins with 0x16 (ContentType::Handshake).
-                            let mut first_byte = [0u8; 1];
-                            let is_tls = match stream.read_exact(&mut first_byte).await {
-                                Ok(_n) => first_byte[0] == TLS_CONTENT_TYPE_HANDSHAKE,
-                                Err(e) => {
-                                    eprintln!("read error ({}): {e}", addr);
-                                    return;
-                                }
-                            };
-
-                            if is_tls {
-                                let prefixed = PrefixedStream {
-                                    prefix: Some(first_byte[0]),
-                                    inner: stream,
-                                };
-                                let tls_stream = match tls_acceptor.accept(prefixed).await {
-                                    Ok(tls) => tls,
-                                    Err(e) => {
-                                        eprintln!("TLS handshake error ({}): {e}", addr);
-                                        return;
-                                    }
-                                };
-                                let io = TokioIo::new(tls_stream);
-
-                                let svc = service_fn(move |req: Request<Incoming>| {
-                                    let log_mode = log_mode.clone();
-                                    async move { handle_request(req, log_mode).await }
-                                });
-
-                                if let Err(err) = auto::Builder::new(TokioExecutor::new())
-                                    .serve_connection(io, svc)
-                                    .await
-                                {
-                                    eprintln!("connection error ({}): {err}", addr);
-                                }
-                            } else {
-                                let prefixed = PrefixedStream {
-                                    prefix: Some(first_byte[0]),
-                                    inner: stream,
-                                };
-                                let io = TokioIo::new(prefixed);
-
-                                let svc = service_fn(move |req: Request<Incoming>| {
-                                    let log_mode = log_mode.clone();
-                                    async move { handle_request(req, log_mode).await }
-                                });
-
-                                if let Err(err) = auto::Builder::new(TokioExecutor::new())
-                                    .serve_connection(io, svc)
-                                    .await
-                                {
-                                    eprintln!("connection error ({}): {err}", addr);
-                                }
+                let (mut stream, addr) = tokio::select! {
+                    result = listener.accept() => {
+                        match result {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                eprintln!("accept error on worker {i}: {e}");
+                                break;
                             }
-                        });
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("accept error on worker {i}: {e}");
+                    _ = shutdown_rx.changed() => {
                         break;
                     }
-                }
+                };
+
+                let log_mode = log_mode.clone();
+                let tls_acceptor = tls_acceptor.clone();
+                tokio::task::spawn(async move {
+                    // Read first byte to detect TLS vs plain HTTP.
+                    // A TLS ClientHello always begins with 0x16 (ContentType::Handshake).
+                    let mut first_byte = [0u8; 1];
+                    let is_tls = match stream.read_exact(&mut first_byte).await {
+                        Ok(_n) => first_byte[0] == TLS_CONTENT_TYPE_HANDSHAKE,
+                        Err(e) => {
+                            eprintln!("read error ({}): {e}", addr);
+                            return;
+                        }
+                    };
+
+                    if is_tls {
+                        let prefixed = PrefixedStream {
+                            prefix: Some(first_byte[0]),
+                            inner: stream,
+                        };
+                        let tls_stream = match tls_acceptor.accept(prefixed).await {
+                            Ok(tls) => tls,
+                            Err(e) => {
+                                eprintln!("TLS handshake error ({}): {e}", addr);
+                                return;
+                            }
+                        };
+                        let io = TokioIo::new(tls_stream);
+
+                        let svc = service_fn(move |req: Request<Incoming>| {
+                            let log_mode = log_mode.clone();
+                            async move { handle_request(req, log_mode).await }
+                        });
+
+                        if let Err(err) = auto::Builder::new(TokioExecutor::new())
+                            .serve_connection(io, svc)
+                            .await
+                        {
+                            eprintln!("connection error ({}): {err}", addr);
+                        }
+                    } else {
+                        let prefixed = PrefixedStream {
+                            prefix: Some(first_byte[0]),
+                            inner: stream,
+                        };
+                        let io = TokioIo::new(prefixed);
+
+                        let svc = service_fn(move |req: Request<Incoming>| {
+                            let log_mode = log_mode.clone();
+                            async move { handle_request(req, log_mode).await }
+                        });
+
+                        if let Err(err) = auto::Builder::new(TokioExecutor::new())
+                            .serve_connection(io, svc)
+                            .await
+                        {
+                            eprintln!("connection error ({}): {err}", addr);
+                        }
+                    }
+                });
             }
         });
 
@@ -194,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // QUIC workers (HTTP/3)
     for i in 0..num_workers {
-        let udp_socket = match create_reuseport_udp_socket(PORT) {
+        let udp_socket = match create_reuseport_udp_socket(port) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Failed to create UDP socket for QUIC worker {i}: {e}");
@@ -202,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         };
         let log_mode = log_mode.clone();
+        let mut shutdown_rx = shutdown_rx.clone();
         let quic_tls_config: quinn::crypto::rustls::QuicServerConfig = {
             let mut quic_tls = (*tls_config).clone();
             quic_tls.alpn_protocols = vec![b"h3".to_vec()];
@@ -235,7 +253,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let handle = tokio::spawn(async move {
             loop {
-                match endpoint.accept().await {
+                let incoming = tokio::select! {
+                    result = endpoint.accept() => result,
+                    _ = shutdown_rx.changed() => {
+                        // Close the QUIC endpoint gracefully:
+                        // sends CONNECTION_CLOSE frames to all active connections.
+                        endpoint.close(0u32.into(), b"server shutting down");
+                        break;
+                    }
+                };
+
+                match incoming {
                     Some(incoming) => {
                         let log_mode = log_mode.clone();
                         tokio::task::spawn(async move {
@@ -265,8 +293,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         handles.push(handle);
     }
 
-    for handle in handles {
-        let _ = handle.await;
+    // ── Wait for shutdown signal ────────────────────────────────
+    tokio::signal::ctrl_c().await.ok();
+    eprintln!(
+        "\nReceived shutdown signal — draining in-flight requests (timeout: {}s)...",
+        shutdown_timeout.as_secs()
+    );
+
+    // Signal all workers to stop accepting new connections.
+    let _ = shutdown_tx.send(true);
+    // Drop the sender so any workers still in `changed()` see the channel as closed.
+    drop(shutdown_tx);
+
+    // Wait for workers to exit their accept loops and finish draining.
+    let drain_future = async {
+        for handle in handles {
+            let _ = handle.await;
+        }
+    };
+
+    match tokio::time::timeout(shutdown_timeout, drain_future).await {
+        Ok(()) => eprintln!("Shutdown complete — all workers exited cleanly."),
+        Err(_elapsed) => {
+            eprintln!(
+                "Shutdown timed out after {}s — forcing exit (some connections may have been dropped).",
+                shutdown_timeout.as_secs()
+            );
+        }
     }
 
     Ok(())

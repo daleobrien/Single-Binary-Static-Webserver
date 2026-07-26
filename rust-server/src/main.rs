@@ -3,6 +3,7 @@ mod error;
 mod handlers;
 mod logging;
 mod quic_worker;
+mod shutdown;
 mod sockets;
 mod tcp_worker;
 mod tls_stream;
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 use config::{PORT, SHUTDOWN_TIMEOUT_SECS};
 use logging::init_logging;
+use shutdown::wait_for_shutdown;
 use tokio_rustls::TlsAcceptor;
 
 // ── Compile-time generated assets ──────────────────────────────────
@@ -75,30 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ));
 
     // ── Wait for shutdown signal ────────────────────────────────────
-    tokio::signal::ctrl_c().await.ok();
-    eprintln!(
-        "\nReceived shutdown signal — draining in-flight requests (timeout: {}s)...",
-        shutdown_timeout.as_secs()
-    );
-
-    let _ = shutdown_tx.send(true);
-    drop(shutdown_tx);
-
-    let drain_future = async {
-        for handle in handles {
-            let _ = handle.await;
-        }
-    };
-
-    match tokio::time::timeout(shutdown_timeout, drain_future).await {
-        Ok(()) => eprintln!("Shutdown complete — all workers exited cleanly."),
-        Err(_elapsed) => {
-            eprintln!(
-                "Shutdown timed out after {}s — forcing exit (some connections may have been dropped).",
-                shutdown_timeout.as_secs()
-            );
-        }
-    }
+    wait_for_shutdown(shutdown_tx, handles, shutdown_timeout).await;
 
     Ok(())
 }

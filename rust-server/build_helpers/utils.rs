@@ -63,12 +63,14 @@ pub fn header_set_key(headers: &[(String, String)]) -> String {
 }
 
 /// Compute the SHA-256 digest of `data` and return it as a base64 string.
+#[allow(dead_code)]
 pub fn sha256_base64(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
     BASE64.encode(&digest)
 }
 
 /// Compute the SHA-256 digest of `data` and return it as a lowercase hex string.
+#[allow(dead_code)]
 pub fn sha256_hex(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
     format!("{:x}", digest)
@@ -114,4 +116,139 @@ pub fn escape_byte_string(data: &[u8]) -> String {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    // ── mime_for_file: project's extension → MIME mapping ──────────
+
+    #[test]
+    fn mime_for_known_extensions() {
+        assert_eq!(mime_for_file("index.html"), "text/html");
+        assert_eq!(mime_for_file("style.css"), "text/css");
+        assert_eq!(mime_for_file("script.js"), "text/javascript");
+    }
+
+    #[test]
+    fn mime_falls_back_to_octet_stream() {
+        assert_eq!(mime_for_file("image.png"), "application/octet-stream");
+        assert_eq!(mime_for_file("README"), "application/octet-stream");
+        assert_eq!(mime_for_file(""), "application/octet-stream");
+    }
+
+    // ── file_to_const: filename → Rust const identifier ──────────
+
+    #[test]
+    fn file_to_const_transforms_correctly() {
+        assert_eq!(file_to_const("script.js"), "SCRIPT_JS");
+        assert_eq!(file_to_const("style.css"), "STYLE_CSS");
+        assert_eq!(file_to_const("index.html"), "INDEX_HTML");
+        assert_eq!(file_to_const("my-file.js"), "MY_FILE_JS");
+        assert_eq!(file_to_const("jquery.min.js"), "JQUERY_MIN_JS");
+    }
+
+    #[test]
+    fn file_to_const_prepends_f_for_leading_digit() {
+        assert_eq!(file_to_const("404.html"), "F_404_HTML");
+    }
+
+    // ── url_paths_for_file: URL routing aliases ──────────────────
+
+    #[test]
+    fn html_files_get_extensionless_alias() {
+        assert_eq!(
+            url_paths_for_file("about.html"),
+            vec!["/about.html", "/about"]
+        );
+    }
+
+    #[test]
+    fn index_html_also_serves_root() {
+        assert_eq!(
+            url_paths_for_file("index.html"),
+            vec!["/index.html", "/"]
+        );
+    }
+
+    #[test]
+    fn non_html_files_have_no_alias() {
+        assert_eq!(url_paths_for_file("script.js"), vec!["/script.js"]);
+        assert_eq!(url_paths_for_file("style.css"), vec!["/style.css"]);
+    }
+
+    // ── header_set_key: deterministic header dedup key ───────────
+
+    #[test]
+    fn header_key_sorts_and_is_order_independent() {
+        let a = vec![("b".into(), "1".into()), ("a".into(), "2".into())];
+        let b = vec![("a".into(), "2".into()), ("b".into(), "1".into())];
+        assert_eq!(header_set_key(&a), header_set_key(&b));
+        assert_eq!(header_set_key(&a), "a:2\nb:1");
+    }
+
+    #[test]
+    fn header_key_empty_produces_empty_string() {
+        assert_eq!(header_set_key(&[]), "");
+    }
+
+    // ── hashed_filename: content-hash injection ──────────────────
+
+    #[test]
+    fn hashed_filename_inserts_first_8_chars_of_hash() {
+        let hash = "abc123def4567890";
+        assert_eq!(hashed_filename("script.js", hash), "script.abc123de.js");
+        assert_eq!(hashed_filename("style.css", hash), "style.abc123de.css");
+    }
+
+    #[test]
+    fn hashed_filename_handles_short_hash() {
+        assert_eq!(hashed_filename("file.js", "abc"), "file.abc.js");
+        assert_eq!(hashed_filename("file.js", ""), "file..js");
+    }
+
+    // ── compress_to_gzip: verify valid gzip + raw copy ───────────
+
+    #[test]
+    fn compress_to_gzip_produces_valid_output() {
+        let dir = tempdir().unwrap();
+        let gz_path = dir.path().join("test.gz").to_str().unwrap().to_string();
+        let raw_path = dir.path().join("test.gz.raw");
+
+        let data = b"Hello, world! Test data for gzip.";
+        let len = compress_to_gzip(data, &gz_path);
+
+        assert!(len > 0);
+        assert!(raw_path.exists());
+        assert_eq!(fs::read(&raw_path).unwrap(), data);
+
+        let gz = fs::read(&gz_path).unwrap();
+        assert_eq!(&gz[..2], &[0x1F, 0x8B]); // gzip magic bytes
+    }
+
+    // ── escape_byte_string: safe byte→string for codegen ─────────
+
+    #[test]
+    fn escape_preserves_printable_ascii() {
+        assert_eq!(escape_byte_string(b"hello"), "hello");
+    }
+
+    #[test]
+    fn escape_handles_special_characters() {
+        assert_eq!(escape_byte_string(b"a\nb"), "a\\nb");
+        assert_eq!(escape_byte_string(b"a\rb"), "a\\rb");
+        assert_eq!(escape_byte_string(b"a\tb"), "a\\tb");
+        assert_eq!(escape_byte_string(b"a\\b"), "a\\\\b");
+        assert_eq!(escape_byte_string(b"a\"b"), "a\\\"b");
+    }
+
+    #[test]
+    fn escape_handles_non_printable_bytes() {
+        assert_eq!(escape_byte_string(&[0x00, 0x01]), "\\x00\\x01");
+        assert_eq!(escape_byte_string(&[0xFF]), "\\xFF");
+        assert_eq!(escape_byte_string(b""), "");
+    }
 }

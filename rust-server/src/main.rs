@@ -714,3 +714,133 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    // A simple error type for testing is_client_cancel.
+    #[derive(Debug)]
+    struct FakeError(String);
+
+    impl std::fmt::Display for FakeError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for FakeError {}
+
+    // ── is_client_cancel: classifies client-cancel errors ────────
+
+    #[test]
+    fn client_cancel_detects_known_patterns() {
+        assert!(is_client_cancel(&FakeError("H3_REQUEST_CANCELLED".into())));
+        assert!(is_client_cancel(&FakeError("h3_request_cancelled".into())));
+        assert!(is_client_cancel(&FakeError("request cancelled".into())));
+        assert!(is_client_cancel(&FakeError("aborted by peer".into())));
+    }
+
+    #[test]
+    fn client_cancel_rejects_normal_errors() {
+        assert!(!is_client_cancel(&FakeError("internal server error".into())));
+        assert!(!is_client_cancel(&FakeError("".into())));
+        assert!(!is_client_cancel(&FakeError("h3_request".into())));
+    }
+
+    // ── LogMode Clone ────────────────────────────────────────────
+
+    #[test]
+    fn log_mode_clone_summary_shares_atomic_counter() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let a = LogMode::Summary(Arc::clone(&counter));
+        let b = a.clone();
+        if let LogMode::Summary(c) = &b {
+            c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn log_mode_clone_detailed_shares_sender_and_preserves_widths() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let a = LogMode::Detailed { tx, path_w: 42, size_w: 7 };
+        let b = a.clone();
+        if let LogMode::Detailed { tx, path_w, size_w } = &b {
+            assert_eq!(*path_w, 42);
+            assert_eq!(*size_w, 7);
+            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 50_u64, "h1".into())).unwrap();
+        }
+        let msg = rx.try_recv().unwrap();
+        assert_eq!(msg.0, "GET");
+        assert_eq!(msg.1, "/t");
+        assert_eq!(msg.2, 200);
+    }
+
+    // ── flush_log: dispatches to summary or detailed logging ─────
+
+    #[test]
+    fn flush_log_summary_increments_counter_and_consumes_option() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let info = TimingInfo {
+            start: std::time::Instant::now(),
+            method: "GET".into(),
+            path: "/".into(),
+            status: 200,
+            size: 1024,
+            protocol: "h1".into(),
+            log_mode: LogMode::Summary(Arc::clone(&counter)),
+        };
+        let mut log = Some(info);
+        flush_log(&mut log);
+        assert!(log.is_none());
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn flush_log_detailed_sends_on_channel() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let info = TimingInfo {
+            start: std::time::Instant::now(),
+            method: "POST".into(),
+            path: "/api".into(),
+            status: 201,
+            size: 512,
+            protocol: "h2".into(),
+            log_mode: LogMode::Detailed { tx, path_w: 10, size_w: 5 },
+        };
+        let mut log = Some(info);
+        flush_log(&mut log);
+        assert!(log.is_none());
+
+        let msg = rx.try_recv().unwrap();
+        assert_eq!(msg.0, "POST");
+        assert_eq!(msg.1, "/api");
+        assert_eq!(msg.2, 201);
+        assert_eq!(msg.5, "h2");
+        // elapsed microseconds (0 is valid for instantaneous operations)
+        assert_eq!(msg.5, "h2");
+    }
+
+    #[test]
+    fn flush_log_none_is_noop() {
+        let mut log: Option<TimingInfo> = None;
+        flush_log(&mut log);
+        assert!(log.is_none());
+    }
+
+    // ── Constants ────────────────────────────────────────────────
+
+    #[test]
+    fn port_is_3000() {
+        assert_eq!(PORT, 3000);
+    }
+
+    #[test]
+    fn tls_handshake_byte_is_0x16() {
+        assert_eq!(TLS_CONTENT_TYPE_HANDSHAKE, 0x16);
+    }
+}

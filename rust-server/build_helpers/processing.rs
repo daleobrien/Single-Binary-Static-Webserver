@@ -65,3 +65,66 @@ pub fn minify_js_bytes(js: &str) -> Vec<u8> {
         .expect("JS minification failed for version script");
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── html_cfg: project's minification config ──────────────────
+
+    #[test]
+    fn html_cfg_toggles_js_minification_only() {
+        let with_js = html_cfg(true);
+        assert!(with_js.minify_js);
+        assert!(with_js.minify_css);
+
+        let without_js = html_cfg(false);
+        assert!(!without_js.minify_js);
+        assert!(without_js.minify_css); // CSS is always minified
+    }
+
+    // ── minify_file: extension-based routing to minifiers ────────
+
+    #[test]
+    fn minify_file_routes_html_to_html_minifier() {
+        let input = b"<!DOCTYPE html><html>  <body>  <p>Hi</p>  </body></html>";
+        let result = minify_file("page.html", input);
+        let s = String::from_utf8_lossy(&result);
+        assert!(s.contains("Hi"));
+        assert!(result.len() < input.len(), "HTML should be smaller after minification");
+    }
+
+    #[test]
+    fn minify_file_routes_css_to_css_minifier() {
+        let input = b"body {\n    color: red;\n}";
+        let result = minify_file("style.css", input);
+        let s = String::from_utf8_lossy(&result);
+        assert!(s.contains("color"));
+        assert!(!s.contains('\n'), "CSS should have no newlines after minification");
+    }
+
+    #[test]
+    fn minify_file_routes_js_to_js_minifier() {
+        let input = b"function add(a, b) {\n    return a + b;\n}";
+        let result = minify_file("script.js", input);
+        let s = String::from_utf8_lossy(&result);
+        assert!(s.contains("return") || s.contains("add"));
+        assert!(result.len() <= input.len());
+    }
+
+    #[test]
+    fn minify_file_passes_through_unknown_types() {
+        let input = b"plain text content";
+        assert_eq!(minify_file("readme.txt", input), input);
+        assert_eq!(minify_file("README", input), input);
+    }
+
+    // ── minify_js_bytes: helper used for the version-check script ─
+
+    #[test]
+    fn minify_js_bytes_produces_smaller_output() {
+        let input = "function  hello(  ) {\n    return  42;\n}";
+        let result = minify_js_bytes(input);
+        assert!(result.len() < input.len());
+    }
+}

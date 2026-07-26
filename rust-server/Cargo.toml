@@ -28,6 +28,15 @@ rustls-pemfile = "2"
 sha2 = "0.10"
 base64 = "0.22"
 
+[dev-dependencies]
+sha2 = "0.10"
+base64 = "0.22"
+flate2 = "1"
+minify-html = "0.15"
+css-minify = "0.3"
+minify-js = "0.6"
+tempfile = "3"
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

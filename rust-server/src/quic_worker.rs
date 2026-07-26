@@ -20,6 +20,30 @@ pub(crate) fn spawn_quic_workers(
         log_mode,
         shutdown_rx,
     } = cfg;
+
+    // ── Pre-build shared QUIC components once, not per-worker ─────
+    // The TLS→QUIC conversion (`try_into`) and rustls::ServerConfig clone
+    // are the expensive parts — doing them once instead of N times avoids
+    // cloning certificate chains and private keys per worker.
+    let quic_tls_config: quinn::crypto::rustls::QuicServerConfig = {
+        let mut quic_tls = (*tls_config).clone();
+        quic_tls.alpn_protocols = vec![b"h3".to_vec()];
+        quic_tls
+            .try_into()
+            .map_err(|e| format!("Failed to create QUIC crypto config: {e}"))?
+    };
+    let quic_tls: Arc<dyn quinn::crypto::ServerConfig> = Arc::new(quic_tls_config);
+
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(quinn::IdleTimeout::from(
+        quinn::VarInt::from_u32(30_000),
+    )));
+    transport.keep_alive_interval(Some(Duration::from_secs(10)));
+    let transport = Arc::new(transport);
+
+    let endpoint_config = quinn::EndpointConfig::default();
+    let runtime: Arc<dyn quinn::Runtime> = Arc::new(quinn::TokioRuntime);
+
     let mut handles = Vec::with_capacity(num_workers);
 
     for i in 0..num_workers {
@@ -33,31 +57,16 @@ pub(crate) fn spawn_quic_workers(
         let log_mode = log_mode.clone();
         let mut shutdown_rx = shutdown_rx.clone();
 
-        let quic_tls_config: quinn::crypto::rustls::QuicServerConfig = {
-            let mut quic_tls = (*tls_config).clone();
-            quic_tls.alpn_protocols = vec![b"h3".to_vec()];
-            match quic_tls.try_into() {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Failed to create QUIC crypto config on worker {i}: {e}");
-                    continue;
-                }
-            }
-        };
+        // Cheap Arc clones — no TLS material is copied per worker.
         let mut quic_server_config =
-            quinn::ServerConfig::with_crypto(Arc::new(quic_tls_config));
-        let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(quinn::IdleTimeout::from(
-            quinn::VarInt::from_u32(30_000),
-        )));
-        transport.keep_alive_interval(Some(Duration::from_secs(10)));
-        quic_server_config.transport_config(Arc::new(transport));
+            quinn::ServerConfig::with_crypto(Arc::clone(&quic_tls));
+        quic_server_config.transport_config(Arc::clone(&transport));
 
         let endpoint = match quinn::Endpoint::new(
-            quinn::EndpointConfig::default(),
+            endpoint_config.clone(),
             Some(quic_server_config),
             udp_socket,
-            Arc::new(quinn::TokioRuntime),
+            Arc::clone(&runtime),
         ) {
             Ok(ep) => ep,
             Err(e) => {

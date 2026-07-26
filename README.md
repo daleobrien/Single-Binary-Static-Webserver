@@ -82,6 +82,7 @@ At startup, each header-builder function is called exactly once and cached in a 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `3000` | Server port (TCP and UDP) |
+| `WORKERS` | *available parallelism* | Number of worker threads (one TCP listener and QUIC endpoint each) |
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 
 ### Build-time
@@ -108,10 +109,10 @@ cd rust-server
 cargo run
 ```
 
-Run with summary logging (req/s counter):
+CLI flags (run `cargo run -- --help` for the full list):
 
 ```sh
-cargo run -- --summary
+cargo run -- --summary    # Log aggregated req/s every 5s instead of per-request details
 ```
 
 The server listens on port 3000:

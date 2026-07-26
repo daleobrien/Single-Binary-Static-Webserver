@@ -10,6 +10,19 @@ pub(crate) static PORT: LazyLock<u16> = LazyLock::new(|| {
         .unwrap_or(3000)
 });
 
+/// Number of worker threads — configurable via the `WORKERS` environment
+/// variable, defaults to `available_parallelism()` (with a floor of 4).
+pub(crate) static NUM_WORKERS: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("WORKERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+        })
+});
+
 pub(crate) const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 0x16;
 
 /// Configuration shared by TCP and QUIC worker spawn functions.
@@ -49,5 +62,12 @@ mod tests {
     #[test]
     fn shutdown_timeout_default_is_30() {
         assert_eq!(*SHUTDOWN_TIMEOUT_SECS, 30);
+    }
+
+    #[test]
+    fn num_workers_default_is_reasonable() {
+        let n = *NUM_WORKERS;
+        assert!(n >= 1, "expected at least 1 worker, got {n}");
+        assert!(n <= 1024, "expected at most 1024 workers, got {n}");
     }
 }

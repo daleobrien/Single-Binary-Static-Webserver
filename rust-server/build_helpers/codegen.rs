@@ -173,6 +173,7 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
         )
         .unwrap();
         writeln!(g, "const {const_prefix}_LEN: usize = {content_length};").unwrap();
+        writeln!(g, "const {const_prefix}_LEN_STR: &str = \"{content_length}\";").unwrap();
         writeln!(g, "const {const_prefix}_TYPE: &str = \"{content_type}\";").unwrap();
         writeln!(g).unwrap();
     }
@@ -195,6 +196,7 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     )
     .unwrap();
     writeln!(g, "const VERSION_LEN: usize = {};", ctx.version_len).unwrap();
+    writeln!(g, "const VERSION_LEN_STR: &str = \"{}\";", ctx.version_len).unwrap();
     writeln!(
         g,
         "const VERSION_TYPE: &str = \"text/plain; charset=utf-8\";"
@@ -228,6 +230,7 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
         )
         .unwrap();
         writeln!(g, "const NOT_FOUND_LEN: usize = {body_len};").unwrap();
+        writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{body_len}\";").unwrap();
         writeln!(
             g,
             "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
@@ -245,6 +248,7 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
         .unwrap();
         writeln!(g, "const NOT_FOUND_BODY: &[u8] = b\"{escaped_body}\";").unwrap();
         writeln!(g, "const NOT_FOUND_LEN: usize = {len};").unwrap();
+        writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{len}\";").unwrap();
         writeln!(
             g,
             "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
@@ -300,6 +304,7 @@ fn write_asset_struct(g: &mut fs::File) {
     writeln!(g, "pub struct Asset {{").unwrap();
     writeln!(g, "    pub body: &'static [u8],").unwrap();
     writeln!(g, "    pub content_length: usize,").unwrap();
+    writeln!(g, "    pub content_length_str: &'static str,").unwrap();
     writeln!(g, "    pub content_type: &'static str,").unwrap();
     writeln!(g, "    pub status_code: u16,").unwrap();
     writeln!(g, "    header_index: usize,").unwrap();
@@ -314,6 +319,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "static {p}_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: {p}_BODY,").unwrap();
         writeln!(g, "    content_length: {p}_LEN,").unwrap();
+        writeln!(g, "    content_length_str: {p}_LEN_STR,").unwrap();
         writeln!(g, "    content_type: {p}_TYPE,").unwrap();
         writeln!(g, "    status_code: 200,").unwrap();
         writeln!(g, "    header_index: {hi},").unwrap();
@@ -325,6 +331,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "static VERSION_ASSET: Asset = Asset {{").unwrap();
     writeln!(g, "    body: VERSION_BODY,").unwrap();
     writeln!(g, "    content_length: VERSION_LEN,").unwrap();
+    writeln!(g, "    content_length_str: VERSION_LEN_STR,").unwrap();
     writeln!(g, "    content_type: VERSION_TYPE,").unwrap();
     writeln!(g, "    status_code: 200,").unwrap();
     writeln!(
@@ -340,6 +347,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
     writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
     writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
+    writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
     writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
     writeln!(g, "    status_code: 404,").unwrap();
     writeln!(

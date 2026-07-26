@@ -206,8 +206,7 @@ where
                     *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
                     resp.headers_mut().insert(
                         hyper::header::CONTENT_LENGTH,
-                        hyper::header::HeaderValue::from_str(&content_length.to_string())
-                            .unwrap_or(hyper::header::HeaderValue::from_static("0")),
+                        hyper::header::HeaderValue::from_static(asset.content_length_str),
                     );
 
                     if let Err(e) = stream.send_response(resp).await {

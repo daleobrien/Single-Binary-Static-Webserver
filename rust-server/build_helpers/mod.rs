@@ -50,7 +50,7 @@ pub fn run() {
 
     // ── Build asset metadata and header deduplication ──
     let (assets, asset_header_indices, header_sets, max_path_len, max_size, has_404, use_uncompressed) =
-        build_asset_metadata(&files, &gzip_dir, &security_headers, &file_hashes, &hashed_filenames, &uncompressed_lens);
+        build_asset_metadata(&files, &gzip_dir, &security_headers, &file_hashes, &hashed_filenames, &uncompressed_lens, &build_version);
 
     // ── Version asset ──
     let (version_header_idx, version_len, version_use_uncompressed, header_sets) =
@@ -62,7 +62,7 @@ pub fn run() {
 
     // ── 404 header set ──
     let (not_found_header_idx, not_found_use_uncompressed, header_sets) =
-        build_not_found_headers(has_404, &security_headers, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets);
+        build_not_found_headers(has_404, &security_headers, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets, &build_version);
 
     // ── Generate Rust source ──
     let ctx = CodegenCtx {
@@ -301,6 +301,7 @@ fn build_asset_metadata(
     file_hashes: &HashMap<String, String>,
     hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
+    build_version: &str,
 ) -> (
     Vec<AssetGen>,
     Vec<usize>,
@@ -381,6 +382,10 @@ fn build_asset_metadata(
             "content-digest".into(),
             format!("sha-256={}", utils::sha256_base64(&body_data)),
         ));
+
+        // ETag: the build version — allows conditional requests (If-None-Match → 304)
+        // for every resource, not just the /v endpoint.
+        headers.push(("etag".into(), build_version.to_string()));
 
         // Deduplicate: get or assign a builder index
         let key = utils::header_set_key(&headers);
@@ -481,6 +486,7 @@ fn build_not_found_headers(
     gzip_dir: &str,
     uncompressed_lens: &HashMap<String, usize>,
     mut header_sets: Vec<Vec<(String, String)>>,
+    build_version: &str,
 ) -> (usize, bool, Vec<Vec<(String, String)>>) {
     let mut not_found_headers: Vec<(String, String)> = Vec::new();
     not_found_headers.push(("content-type".into(), "text/html; charset=utf-8".into()));
@@ -499,6 +505,7 @@ fn build_not_found_headers(
     };
     not_found_headers.extend_from_slice(security_headers);
     not_found_headers.push(("cache-control".into(), "public, max-age=3600".into()));
+    not_found_headers.push(("etag".into(), build_version.to_string()));
 
     // Rebuild index from existing header_sets
     let mut header_set_index: HashMap<String, usize> = HashMap::new();

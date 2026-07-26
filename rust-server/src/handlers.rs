@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
+use hyper::header::{CACHE_CONTROL, ETAG, HeaderValue};
 use hyper::Request;
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
@@ -9,6 +10,29 @@ use std::time::Instant;
 use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
 use crate::{Asset, BUILD_VERSION, HEADER_MAPS, route};
+
+/// Returns true if the request's `If-None-Match` header matches the build version,
+/// meaning the client already has the latest version of all static resources.
+#[inline]
+fn is_not_modified<B>(req: &Request<B>) -> bool {
+    req.headers()
+        .get("if-none-match")
+        .and_then(|v| v.to_str().ok())
+        .map_or(false, |etag| etag == BUILD_VERSION)
+}
+
+/// Build a 304 Not Modified response with the build-version ETag.
+/// Generic over body type so it works for both h1/h2 (`Full<Bytes>`) and h3 (`()`).
+fn not_modified_response<T: Default>() -> hyper::Response<T> {
+    let mut resp = hyper::Response::new(T::default());
+    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
+    resp.headers_mut().insert(ETAG, HeaderValue::from_static(BUILD_VERSION));
+    resp.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+    );
+    resp
+}
 
 #[inline]
 pub(crate) fn build_response(asset: &Asset) -> hyper::Response<Full<Bytes>> {
@@ -35,40 +59,24 @@ pub(crate) async fn handle_request(
         _ => "h1",
     };
 
-    // Conditional version check: return 304 if ETag matches build version
-    if path == "/v" {
-        if let Some(etag) = req.headers().get("if-none-match") {
-            if let Ok(etag_str) = etag.to_str() {
-                if etag_str == BUILD_VERSION {
-                    let mut resp = hyper::Response::new(Full::new(Bytes::new()));
-                    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-                    resp.headers_mut().insert(
-                        hyper::header::HeaderName::from_static("etag"),
-                        hyper::header::HeaderValue::from_static(BUILD_VERSION),
-                    );
-                    resp.headers_mut().insert(
-                        hyper::header::HeaderName::from_static("cache-control"),
-                        hyper::header::HeaderValue::from_static(
-                            "no-cache, no-store, must-revalidate",
-                        ),
-                    );
-                    let (parts, body) = resp.into_parts();
-                    let timed = TimedBody {
-                        inner: body,
-                        log: Some(TimingInfo {
-                            start,
-                            method,
-                            path,
-                            status: 304,
-                            size: 0,
-                            protocol: protocol.to_string(),
-                            log_mode,
-                        }),
-                    };
-                    return Ok(hyper::Response::from_parts(parts, timed));
-                }
-            }
-        }
+    // Generic ETag check: return 304 for any resource if the client
+    // already has the current build version cached.
+    if is_not_modified(&req) {
+        let resp = not_modified_response::<Full<Bytes>>();
+        let (parts, body) = resp.into_parts();
+        let timed = TimedBody {
+            inner: body,
+            log: Some(TimingInfo {
+                start,
+                method,
+                path,
+                status: 304,
+                size: 0,
+                protocol: protocol.to_string(),
+                log_mode,
+            }),
+        };
+        return Ok(hyper::Response::from_parts(parts, timed));
     }
 
     let asset = route(&path);
@@ -151,56 +159,40 @@ where
                     let path = req.uri().path().to_owned();
                     let method = req.method().to_string();
 
-                    // Conditional version check: return 304 if ETag matches
-                    if path == "/v" {
-                        if let Some(etag) = req.headers().get("if-none-match") {
-                            if let Ok(etag_str) = etag.to_str() {
-                                if etag_str == BUILD_VERSION {
-                                    let mut resp = hyper::Response::new(());
-                                    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-                                    resp.headers_mut().insert(
-                                        hyper::header::HeaderName::from_static("etag"),
-                                        hyper::header::HeaderValue::from_static(BUILD_VERSION),
-                                    );
-                                    resp.headers_mut().insert(
-                                        hyper::header::HeaderName::from_static("cache-control"),
-                                        hyper::header::HeaderValue::from_static(
-                                            "no-cache, no-store, must-revalidate",
-                                        ),
-                                    );
-                                    if let Err(e) = stream.send_response(resp).await {
-                                        if !is_client_cancel(&e) {
-                                            eprintln!("h3 send_response error: {e}");
-                                        }
-                                        return;
-                                    }
-                                    if let Err(e) = stream.finish().await {
-                                        if !is_client_cancel(&e) {
-                                            eprintln!("h3 finish error: {e}");
-                                        }
-                                        return;
-                                    }
-                                    let _ = finished_tx.send(stream);
-                                    match &log_mode {
-                                        LogMode::Summary(counter) => {
-                                            counter.fetch_add(1, Ordering::Relaxed);
-                                        }
-                                        LogMode::Detailed { tx, .. } => {
-                                            let elapsed = start.elapsed().as_micros() as u64;
-                                            let _ = tx.send((
-                                                method,
-                                                path,
-                                                304_u16,
-                                                0_u64,
-                                                elapsed,
-                                                "h3".to_string(),
-                                            ));
-                                        }
-                                    }
-                                    return;
-                                }
+                    // Generic ETag check: return 304 for any resource if
+                    // the client already has the current build version cached.
+                    if is_not_modified(&req) {
+                        let resp = not_modified_response::<()>();
+                        if let Err(e) = stream.send_response(resp).await {
+                            if !is_client_cancel(&e) {
+                                eprintln!("h3 send_response error: {e}");
+                            }
+                            return;
+                        }
+                        if let Err(e) = stream.finish().await {
+                            if !is_client_cancel(&e) {
+                                eprintln!("h3 finish error: {e}");
+                            }
+                            return;
+                        }
+                        let _ = finished_tx.send(stream);
+                        match &log_mode {
+                            LogMode::Summary(counter) => {
+                                counter.fetch_add(1, Ordering::Relaxed);
+                            }
+                            LogMode::Detailed { tx, .. } => {
+                                let elapsed = start.elapsed().as_micros() as u64;
+                                let _ = tx.send((
+                                    method,
+                                    path,
+                                    304_u16,
+                                    0_u64,
+                                    elapsed,
+                                    "h3".to_string(),
+                                ));
                             }
                         }
+                        return;
                     }
 
                     let asset = route(&path);

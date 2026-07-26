@@ -62,6 +62,10 @@ pub fn run() {
     // ── Security headers (CSP is built per-file in build_asset_metadata) ──
     let security_headers = build_non_csp_headers();
 
+    // ── Pre-compute CSP directive values for reuse across both regular
+    //     asset metadata and the 404 fallback header set. ──
+    let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash);
+
     // ── Build asset metadata and header deduplication ──
     let (
         assets,
@@ -76,7 +80,7 @@ pub fn run() {
         &gzip_dir,
         &security_headers,
         &file_hashes,
-        &csp_script_hash,
+        &csp_values,
         &hashed_filenames,
         &uncompressed_lens,
         &build_version,
@@ -90,12 +94,12 @@ pub fn run() {
     let (not_found_header_idx, not_found_use_uncompressed, header_sets) = build_not_found_headers(
         has_404,
         &security_headers,
-        &csp_script_hash,
         &file_hashes,
         &gzip_dir,
         &uncompressed_lens,
         header_sets,
         &build_version,
+        &csp_values,
     );
 
     // ── Generate Rust source ──

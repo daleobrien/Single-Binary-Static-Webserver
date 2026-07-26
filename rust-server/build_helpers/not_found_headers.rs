@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::fs;
 
+use crate::build_helpers::csp;
 use crate::build_helpers::utils;
 
 pub(super) fn build_not_found_headers(
     has_404: bool,
     security_headers: &[(String, String)],
-    csp_script_hash: &str,
     file_hashes: &HashMap<String, String>,
     gzip_dir: &str,
     uncompressed_lens: &HashMap<String, usize>,
     mut header_sets: Vec<Vec<(String, String)>>,
     build_version: &str,
+    csp_values: &csp::CspValues,
 ) -> (usize, bool, Vec<Vec<(String, String)>>) {
     let mut not_found_headers: Vec<(String, String)> = Vec::new();
     not_found_headers.push(("content-type".into(), "text/html; charset=utf-8".into()));
@@ -27,11 +28,9 @@ pub(super) fn build_not_found_headers(
     } else {
         None
     };
-    // 404 pages get a fully locked-down CSP (no scripts, styles, images).
-    let sha = utils::sha256_base64(csp_script_hash.as_bytes());
-    let csp_404 = format!(
-        "default-src 'none'; script-src 'sha256-{sha}'; style-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
-    );
+    // Build CSP from the actual 404.html content so that external resources
+    // like stylesheets and scripts referenced by the 404 page are not blocked.
+    let csp_404 = csp::build_csp("404.html", csp_values);
     not_found_headers.push(("content-security-policy".into(), csp_404));
     not_found_headers.extend_from_slice(security_headers);
     not_found_headers.push(("cache-control".into(), "public, max-age=3600".into()));

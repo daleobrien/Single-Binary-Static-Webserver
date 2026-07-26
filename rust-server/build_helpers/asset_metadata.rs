@@ -10,7 +10,7 @@ pub(super) fn build_asset_metadata(
     gzip_dir: &str,
     security_headers: &[(String, String)],
     file_hashes: &HashMap<String, String>,
-    csp_script_hash: &str,
+    csp_values: &csp::CspValues,
     hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
     build_version: &str,
@@ -31,9 +31,6 @@ pub(super) fn build_asset_metadata(
     let mut has_404 = false;
     let mut max_path_len: usize = 0;
     let mut max_size: usize = 0;
-
-    // Pre-compute CSP directive values once rather than re-filtering per file.
-    let csp_values = csp::build_csp_values(file_hashes, csp_script_hash);
 
     for file in files {
         let content_type = utils::mime_for_file(file);
@@ -75,7 +72,7 @@ pub(super) fn build_asset_metadata(
         max_size = max_size.max(content_length);
 
         // Per-file CSP: every directive is gated on actual page usage.
-        let csp_value = csp::build_csp(file, &csp_values);
+        let csp_value = csp::build_csp(file, csp_values);
 
         // Build header set for this asset
         let mut headers: Vec<(String, String)> = Vec::new();

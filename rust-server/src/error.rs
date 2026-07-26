@@ -34,7 +34,9 @@ mod tests {
 
     #[test]
     fn client_cancel_rejects_normal_errors() {
-        assert!(!is_client_cancel(&FakeError("internal server error".into())));
+        assert!(!is_client_cancel(&FakeError(
+            "internal server error".into()
+        )));
         assert!(!is_client_cancel(&FakeError("".into())));
         assert!(!is_client_cancel(&FakeError("h3_request".into())));
     }

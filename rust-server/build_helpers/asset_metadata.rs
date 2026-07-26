@@ -56,7 +56,10 @@ pub(super) fn build_asset_metadata(
         let gz_name = format!("{file}.gz");
         let gz_path = format!("{gzip_dir}/{gz_name}");
         let gz_data = fs::read(&gz_path).expect("failed to read gzipped file");
-        let uncompressed_len = uncompressed_lens.get(file).copied().unwrap_or(gz_data.len());
+        let uncompressed_len = uncompressed_lens
+            .get(file)
+            .copied()
+            .unwrap_or(gz_data.len());
         let use_uncomp = uncompressed_len < gz_data.len();
         use_uncompressed.push(use_uncomp);
 

@@ -5,12 +5,12 @@ mod logging;
 mod sockets;
 mod tls_stream;
 
+use h3_quinn::Connection as H3QuinnConnection;
 use hyper::body::Incoming;
+use hyper::service::service_fn;
 use hyper::{HeaderMap, Request};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use hyper::service::service_fn;
-use h3_quinn::Connection as H3QuinnConnection;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -18,10 +18,10 @@ use tokio::io::AsyncReadExt;
 use tokio_rustls::TlsAcceptor;
 
 use config::{PORT, SHUTDOWN_TIMEOUT_SECS, TLS_CONTENT_TYPE_HANDSHAKE};
+use handlers::{handle_h3_connection, handle_request};
 use logging::LogMode;
 use sockets::{create_reuseport_listener, create_reuseport_udp_socket};
 use tls_stream::PrefixedStream;
-use handlers::{handle_request, handle_h3_connection};
 
 // ── Compile-time generated assets ──────────────────────────────────
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
@@ -76,7 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             loop {
                 interval.tick().await;
                 let count = counter_bg.swap(0, Ordering::Relaxed);
-                eprintln!("{count} requests in the last 5s ({:.1} req/s)", count as f64 / 5.0);
+                eprintln!(
+                    "{count} requests in the last 5s ({:.1} req/s)",
+                    count as f64 / 5.0
+                );
             }
         });
 
@@ -90,7 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tokio::spawn(async move {
             eprintln!(
                 "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  TIME",
-                "PR", "METHOD", "PATH", "STA", "SIZE",
+                "PR",
+                "METHOD",
+                "PATH",
+                "STA",
+                "SIZE",
                 path_w = path_w,
                 size_w = size_w,
             );
@@ -233,8 +240,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         let mut quic_server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_tls_config));
         let mut transport = quinn::TransportConfig::default();
-        transport
-            .max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(30_000))));
+        transport.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(
+            30_000,
+        ))));
         transport.keep_alive_interval(Some(Duration::from_secs(10)));
         quic_server_config.transport_config(Arc::new(transport));
 

@@ -102,8 +102,12 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
             }
             LogMode::Detailed { tx, .. } => {
                 let _ = tx.send((
-                    info.method, info.path, info.status, info.size,
-                    elapsed, info.protocol,
+                    info.method,
+                    info.path,
+                    info.status,
+                    info.size,
+                    elapsed,
+                    info.protocol,
                 ));
             }
         }
@@ -133,12 +137,17 @@ mod tests {
     #[test]
     fn log_mode_clone_detailed_shares_sender_and_preserves_widths() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let a = LogMode::Detailed { tx, path_w: 42, size_w: 7 };
+        let a = LogMode::Detailed {
+            tx,
+            path_w: 42,
+            size_w: 7,
+        };
         let b = a.clone();
         if let LogMode::Detailed { tx, path_w, size_w } = &b {
             assert_eq!(*path_w, 42);
             assert_eq!(*size_w, 7);
-            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 50_u64, "h1".into())).unwrap();
+            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 50_u64, "h1".into()))
+                .unwrap();
         }
         let msg = rx.try_recv().unwrap();
         assert_eq!(msg.0, "GET");
@@ -176,7 +185,11 @@ mod tests {
             status: 201,
             size: 512,
             protocol: "h2".into(),
-            log_mode: LogMode::Detailed { tx, path_w: 10, size_w: 5 },
+            log_mode: LogMode::Detailed {
+                tx,
+                path_w: 10,
+                size_w: 5,
+            },
         };
         let mut log = Some(info);
         flush_log(&mut log);

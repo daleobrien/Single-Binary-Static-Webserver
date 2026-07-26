@@ -17,8 +17,7 @@ pub(super) fn build_not_found_headers(
     not_found_headers.push(("content-type".into(), "text/html; charset=utf-8".into()));
     let mut not_found_use_uncomp = false;
     let gz_404 = if has_404 {
-        let gz = fs::read(format!("{gzip_dir}/404.html.gz"))
-            .expect("failed to read 404 gzip");
+        let gz = fs::read(format!("{gzip_dir}/404.html.gz")).expect("failed to read 404 gzip");
         let orig_len = uncompressed_lens.get("404.html").copied().unwrap_or(0);
         not_found_use_uncomp = orig_len < gz.len();
         if !not_found_use_uncomp {
@@ -47,10 +46,7 @@ pub(super) fn build_not_found_headers(
     let not_found_header_idx = if has_404 {
         // Repr-Digest from the uncompressed 404 HTML
         if let Some(hash) = file_hashes.get("404.html") {
-            not_found_headers.push((
-                "repr-digest".into(),
-                format!("sha-256={}", hash),
-            ));
+            not_found_headers.push(("repr-digest".into(), format!("sha-256={}", hash)));
         }
         // Content-Digest from the body actually sent
         let content_digest_data = if not_found_use_uncomp {

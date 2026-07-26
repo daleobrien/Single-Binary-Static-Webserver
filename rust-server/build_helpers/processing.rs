@@ -91,7 +91,10 @@ mod tests {
         let result = minify_file("page.html", input);
         let s = String::from_utf8_lossy(&result);
         assert!(s.contains("Hi"));
-        assert!(result.len() < input.len(), "HTML should be smaller after minification");
+        assert!(
+            result.len() < input.len(),
+            "HTML should be smaller after minification"
+        );
     }
 
     #[test]
@@ -100,7 +103,10 @@ mod tests {
         let result = minify_file("style.css", input);
         let s = String::from_utf8_lossy(&result);
         assert!(s.contains("color"));
-        assert!(!s.contains('\n'), "CSS should have no newlines after minification");
+        assert!(
+            !s.contains('\n'),
+            "CSS should have no newlines after minification"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
-use hyper::header::{CACHE_CONTROL, ETAG, HeaderValue};
+use hyper::header::{HeaderValue, CACHE_CONTROL, ETAG};
 use hyper::Request;
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
-use crate::{Asset, BUILD_VERSION, HEADER_MAPS, route};
+use crate::{route, Asset, BUILD_VERSION, HEADER_MAPS};
 
 /// Returns true if the request's `If-None-Match` header matches the build version,
 /// meaning the client already has the latest version of all static resources.
@@ -26,7 +26,8 @@ fn is_not_modified<B>(req: &Request<B>) -> bool {
 fn not_modified_response<T: Default>() -> hyper::Response<T> {
     let mut resp = hyper::Response::new(T::default());
     *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-    resp.headers_mut().insert(ETAG, HeaderValue::from_static(BUILD_VERSION));
+    resp.headers_mut()
+        .insert(ETAG, HeaderValue::from_static(BUILD_VERSION));
     resp.headers_mut().insert(
         CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-store, must-revalidate"),
@@ -36,8 +37,7 @@ fn not_modified_response<T: Default>() -> hyper::Response<T> {
 
 #[inline]
 pub(crate) fn build_response(asset: &Asset) -> hyper::Response<Full<Bytes>> {
-    let status =
-        hyper::StatusCode::from_u16(asset.status_code).unwrap_or(hyper::StatusCode::OK);
+    let status = hyper::StatusCode::from_u16(asset.status_code).unwrap_or(hyper::StatusCode::OK);
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(asset.body)));
     *resp.status_mut() = status;
     *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
@@ -118,10 +118,8 @@ where
 
     // Channel for sending finished RequestStreams back to the main loop
     // so they can be kept alive until the Quinn I/O driver catches up.
-    type H3Stream<C> = h3::server::RequestStream<
-        <C as h3::quic::OpenStreams<Bytes>>::BidiStream,
-        Bytes,
-    >;
+    type H3Stream<C> =
+        h3::server::RequestStream<<C as h3::quic::OpenStreams<Bytes>>::BidiStream, Bytes>;
     let (finished_tx, mut finished_rx) = tokio::sync::mpsc::unbounded_channel::<H3Stream<C>>();
     // Finished streams whose FIN may not have been flushed yet.
     let mut pending_streams: Vec<H3Stream<C>> = Vec::new();
@@ -216,8 +214,9 @@ where
                         return;
                     }
                     if !asset.body.is_empty() {
-                        if let Err(e) =
-                            stream.send_data(bytes::Bytes::from_static(asset.body)).await
+                        if let Err(e) = stream
+                            .send_data(bytes::Bytes::from_static(asset.body))
+                            .await
                         {
                             if !is_client_cancel(&e) {
                                 eprintln!("h3 send_data error: {e}");

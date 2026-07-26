@@ -33,9 +33,7 @@ mod codegen_tests {
                 url_paths: vec!["/".to_string(), "/index.html".to_string()],
             }],
             asset_header_indices: vec![0],
-            header_sets: vec![vec![
-                ("content-type".to_string(), "text/html".to_string()),
-            ]],
+            header_sets: vec![vec![("content-type".to_string(), "text/html".to_string())]],
             version_header_idx: 1,
             version_len: 9,
             not_found_header_idx: 2,

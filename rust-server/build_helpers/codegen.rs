@@ -94,7 +94,11 @@ fn write_build_version(g: &mut fs::File, build_version: &str) {
 }
 
 fn write_tls_config(g: &mut fs::File) {
-    writeln!(g, "// ── TLS certificate (embedded at build time) ──────────────").unwrap();
+    writeln!(
+        g,
+        "// ── TLS certificate (embedded at build time) ──────────────"
+    )
+    .unwrap();
     writeln!(
         g,
         "const CERT_DER: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/cert.der\"));"
@@ -111,11 +115,7 @@ fn write_tls_config(g: &mut fs::File) {
         "/// Build a rustls ServerConfig with the embedded certificate and key."
     )
     .unwrap();
-    writeln!(
-        g,
-        "/// ALPN is set to prefer h2, falling back to http/1.1."
-    )
-    .unwrap();
+    writeln!(g, "/// ALPN is set to prefer h2, falling back to http/1.1.").unwrap();
     writeln!(
         g,
         "pub fn build_tls_config() -> std::sync::Arc<rustls::ServerConfig> {{"
@@ -155,10 +155,16 @@ fn write_tls_config(g: &mut fs::File) {
 /// Write per-asset BODY/LEN/TYPE constants.
 fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
     for (i, file) in ctx.files.iter().enumerate() {
-        let suffix = if ctx.use_uncompressed[i] { ".gz.raw" } else { ".gz" };
+        let suffix = if ctx.use_uncompressed[i] {
+            ".gz.raw"
+        } else {
+            ".gz"
+        };
         let embed_name = format!("{file}{suffix}");
         let embed_path = format!("{}/{}", ctx.gzip_dir, embed_name);
-        let content_length = fs::metadata(&embed_path).expect("failed to stat body file").len() as usize;
+        let content_length = fs::metadata(&embed_path)
+            .expect("failed to stat body file")
+            .len() as usize;
         let content_type = utils::mime_for_file(file);
         let const_prefix = utils::file_to_const(file);
 
@@ -173,7 +179,11 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
         )
         .unwrap();
         writeln!(g, "const {const_prefix}_LEN: usize = {content_length};").unwrap();
-        writeln!(g, "const {const_prefix}_LEN_STR: &str = \"{content_length}\";").unwrap();
+        writeln!(
+            g,
+            "const {const_prefix}_LEN_STR: &str = \"{content_length}\";"
+        )
+        .unwrap();
         writeln!(g, "const {const_prefix}_TYPE: &str = \"{content_type}\";").unwrap();
         writeln!(g).unwrap();
     }
@@ -219,11 +229,7 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
             ("404.html.gz", len)
         };
 
-        writeln!(
-            g,
-            "// ── 404 Not Found (from public/404.html) ───────"
-        )
-        .unwrap();
+        writeln!(g, "// ── 404 Not Found (from public/404.html) ───────").unwrap();
         writeln!(
             g,
             "const NOT_FOUND_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{embed_name}\"));"
@@ -334,12 +340,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    content_length_str: VERSION_LEN_STR,").unwrap();
     writeln!(g, "    content_type: VERSION_TYPE,").unwrap();
     writeln!(g, "    status_code: 200,").unwrap();
-    writeln!(
-        g,
-        "    header_index: {},",
-        ctx.version_header_idx
-    )
-    .unwrap();
+    writeln!(g, "    header_index: {},", ctx.version_header_idx).unwrap();
     writeln!(g, "}};").unwrap();
     writeln!(g).unwrap();
 
@@ -350,12 +351,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
     writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
     writeln!(g, "    status_code: 404,").unwrap();
-    writeln!(
-        g,
-        "    header_index: {},",
-        ctx.not_found_header_idx
-    )
-    .unwrap();
+    writeln!(g, "    header_index: {},", ctx.not_found_header_idx).unwrap();
     writeln!(g, "}};").unwrap();
     writeln!(g).unwrap();
 }
@@ -378,32 +374,19 @@ fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
 
 fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "/// Route a URL path to its pre-built static asset.").unwrap();
-    writeln!(
-        g,
-        "/// - `/`          → index.html"
-    )
-    .unwrap();
+    writeln!(g, "/// - `/`          → index.html").unwrap();
     writeln!(
         g,
         "/// - `/about`     → about.html  (extensionless ⇒ .html)"
     )
     .unwrap();
     writeln!(g, "/// - `/script.abc123.js` → script.js  (content-hashed)").unwrap();
-    writeln!(
-        g,
-        "/// Falls back to the embedded 404 page on no match."
-    )
-    .unwrap();
+    writeln!(g, "/// Falls back to the embedded 404 page on no match.").unwrap();
     writeln!(g, "pub fn route(path: &str) -> &'static Asset {{").unwrap();
     writeln!(g, "    match path {{").unwrap();
     for a in &ctx.assets {
         for url in &a.url_paths {
-            writeln!(
-                g,
-                "        \"{url}\" => &{p}_ASSET,",
-                p = a.const_prefix
-            )
-            .unwrap();
+            writeln!(g, "        \"{url}\" => &{p}_ASSET,", p = a.const_prefix).unwrap();
         }
     }
     writeln!(g, "        \"/v\" => &VERSION_ASSET,").unwrap();

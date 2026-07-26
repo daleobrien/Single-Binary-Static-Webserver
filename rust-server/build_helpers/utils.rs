@@ -14,33 +14,33 @@ pub fn mime_for_file(filename: &str) -> &'static str {
     match Path::new(filename).extension().and_then(|e| e.to_str()) {
         // Text
         Some("html") => "text/html; charset=utf-8",
-        Some("css")  => "text/css; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("json") => "application/json",
-        Some("xml")  => "application/xml",
-        Some("txt")  => "text/plain; charset=utf-8",
-        Some("csv")  => "text/csv; charset=utf-8",
-        Some("svg")  => "image/svg+xml",
+        Some("xml") => "application/xml",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        Some("svg") => "image/svg+xml",
         // Images
-        Some("png")  => "image/png",
+        Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif")  => "image/gif",
+        Some("gif") => "image/gif",
         Some("webp") => "image/webp",
-        Some("ico")  => "image/x-icon",
+        Some("ico") => "image/x-icon",
         Some("avif") => "image/avif",
         // Fonts
-        Some("woff")  => "font/woff",
+        Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
-        Some("ttf")   => "font/ttf",
-        Some("otf")   => "font/otf",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
         // Other
         Some("wasm") => "application/wasm",
-        Some("pdf")  => "application/pdf",
-        Some("mp4")  => "video/mp4",
+        Some("pdf") => "application/pdf",
+        Some("mp4") => "video/mp4",
         Some("webm") => "video/webm",
         // Audio
-        Some("mp3")  => "audio/mpeg",
-        Some("ogg")  => "audio/ogg",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
         _ => "application/octet-stream",
     }
 }
@@ -158,7 +158,10 @@ mod tests {
         assert_eq!(mime_for_file("index.html"), "text/html; charset=utf-8");
         assert_eq!(mime_for_file("style.css"), "text/css; charset=utf-8");
         assert_eq!(mime_for_file("script.js"), "text/javascript; charset=utf-8");
-        assert_eq!(mime_for_file("module.mjs"), "text/javascript; charset=utf-8");
+        assert_eq!(
+            mime_for_file("module.mjs"),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(mime_for_file("readme.txt"), "text/plain; charset=utf-8");
         assert_eq!(mime_for_file("data.csv"), "text/csv; charset=utf-8");
     }
@@ -230,10 +233,7 @@ mod tests {
 
     #[test]
     fn index_html_also_serves_root() {
-        assert_eq!(
-            url_paths_for_file("index.html"),
-            vec!["/index.html", "/"]
-        );
+        assert_eq!(url_paths_for_file("index.html"), vec!["/index.html", "/"]);
     }
 
     #[test]

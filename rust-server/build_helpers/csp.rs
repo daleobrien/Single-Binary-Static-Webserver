@@ -20,10 +20,13 @@ pub(super) fn build_csp_values(
     file_hashes: &HashMap<String, String>,
     csp_script_hash: &str,
 ) -> CspValues {
-    let js_hashes    = collect_hashes(file_hashes, &[".js"]);
-    let css_hashes   = collect_hashes(file_hashes, &[".css"]);
-    let img_hashes   = collect_hashes(file_hashes, &[".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"]);
-    let font_hashes  = collect_hashes(file_hashes, &[".woff", ".woff2", ".ttf", ".otf"]);
+    let js_hashes = collect_hashes(file_hashes, &[".js"]);
+    let css_hashes = collect_hashes(file_hashes, &[".css"]);
+    let img_hashes = collect_hashes(
+        file_hashes,
+        &[".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"],
+    );
+    let font_hashes = collect_hashes(file_hashes, &[".woff", ".woff2", ".ttf", ".otf"]);
     let media_hashes = collect_hashes(file_hashes, &[".mp3", ".mp4", ".webm", ".ogg", ".wav"]);
 
     CspValues {
@@ -32,11 +35,11 @@ pub(super) fn build_csp_values(
             parts.extend(js_hashes);
             parts.join(" ")
         },
-        style_src:  join_value("'self'", &css_hashes),
-        img_src:    join_value("'self'", &img_hashes),
-        font_src:   join_value("'self'", &font_hashes),
-        media_src:  join_value("'self'", &media_hashes),
-        frame_src:  "'self'".to_string(),
+        style_src: join_value("'self'", &css_hashes),
+        img_src: join_value("'self'", &img_hashes),
+        font_src: join_value("'self'", &font_hashes),
+        media_src: join_value("'self'", &media_hashes),
+        frame_src: "'self'".to_string(),
     }
 }
 
@@ -45,7 +48,10 @@ pub(super) fn build_csp_values(
 /// only the HTML page's CSP governs what the browser loads.
 #[allow(dead_code)] // only called from the build script, not from tests
 pub(super) fn build_csp(file: &str, values: &CspValues) -> String {
-    let ext = Path::new(file).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     if ext != "html" {
         return "default-src 'none'".to_string();
     }
@@ -69,11 +75,19 @@ fn build_csp_for_source(source: &str, values: &CspValues) -> String {
     //   absent  → "{name} 'none'"
     for (name, value, present) in [
         ("script-src", &values.script_src, true), // version-check script always injected
-        ("style-src",  &values.style_src,  has(&["stylesheet", "<style"])),
-        ("img-src",    &values.img_src,    has(&["<img", "rel=\"icon\"", "rel='icon'"])),
-        ("font-src",   &values.font_src,   has(&["font-", "@font-face"])),
-        ("media-src",  &values.media_src,  has(&["<audio", "<video"])),
-        ("frame-src",  &values.frame_src,  has(&["<iframe"])),
+        (
+            "style-src",
+            &values.style_src,
+            has(&["stylesheet", "<style"]),
+        ),
+        (
+            "img-src",
+            &values.img_src,
+            has(&["<img", "rel=\"icon\"", "rel='icon'"]),
+        ),
+        ("font-src", &values.font_src, has(&["font-", "@font-face"])),
+        ("media-src", &values.media_src, has(&["<audio", "<video"])),
+        ("frame-src", &values.frame_src, has(&["<iframe"])),
     ] {
         directives.push(if present {
             format!("{name} {value}")
@@ -120,12 +134,12 @@ mod tests {
     // Helper: build a CspValues with simple, predictable contents.
     fn test_values() -> CspValues {
         CspValues {
-            script_src: "'sha256-script'" .into(),
-            style_src:  "'self' 'sha256-css'".into(),
-            img_src:    "'self' 'sha256-img'".into(),
-            font_src:   "'self' 'sha256-font'".into(),
-            media_src:  "'self' 'sha256-media'".into(),
-            frame_src:  "'self'".into(),
+            script_src: "'sha256-script'".into(),
+            style_src: "'self' 'sha256-css'".into(),
+            img_src: "'self' 'sha256-img'".into(),
+            font_src: "'self' 'sha256-font'".into(),
+            media_src: "'self' 'sha256-media'".into(),
+            frame_src: "'self'".into(),
         }
     }
 
@@ -163,10 +177,7 @@ mod tests {
 
     #[test]
     fn collect_hashes_multiple_matches() {
-        let map = HashMap::from([
-            ("a.js".into(), "111".into()),
-            ("b.js".into(), "222".into()),
-        ]);
+        let map = HashMap::from([("a.js".into(), "111".into()), ("b.js".into(), "222".into())]);
         let result = collect_hashes(&map, &[".js"]);
         assert_eq!(result.len(), 2);
         assert!(result.contains(&"'sha256-111'".to_string()));
@@ -176,10 +187,10 @@ mod tests {
     #[test]
     fn collect_hashes_mixed_extensions() {
         let map = HashMap::from([
-            ("a.js".into(),   "js".into()),
-            ("b.css".into(),  "css".into()),
-            ("c.png".into(),  "png".into()),
-            ("d.woff2".into(),"font".into()),
+            ("a.js".into(), "js".into()),
+            ("b.css".into(), "css".into()),
+            ("c.png".into(), "png".into()),
+            ("d.woff2".into(), "font".into()),
         ]);
         // Only .js and .css matched
         let result = collect_hashes(&map, &[".js", ".css"]);
@@ -199,7 +210,10 @@ mod tests {
     #[test]
     fn join_value_with_hashes() {
         let hashes = vec!["'sha256-aaa'".to_string(), "'sha256-bbb'".to_string()];
-        assert_eq!(join_value("'self'", &hashes), "'self' 'sha256-aaa' 'sha256-bbb'");
+        assert_eq!(
+            join_value("'self'", &hashes),
+            "'self' 'sha256-aaa' 'sha256-bbb'"
+        );
     }
 
     // ── build_csp_values ────────────────────────────────────────────
@@ -219,9 +233,9 @@ mod tests {
     #[test]
     fn csp_values_with_js_and_css() {
         let map = HashMap::from([
-            ("app.js".into(),  "js123".into()),
-            ("lib.js".into(),  "js456".into()),
-            ("main.css".into(),"css789".into()),
+            ("app.js".into(), "js123".into()),
+            ("lib.js".into(), "js456".into()),
+            ("main.css".into(), "css789".into()),
         ]);
         let v = build_csp_values(&map, "scripthash");
         assert!(v.script_src.contains("'sha256-scripthash'"));
@@ -237,10 +251,10 @@ mod tests {
     #[test]
     fn csp_values_with_images_and_fonts() {
         let map = HashMap::from([
-            ("logo.png".into(),   "img1".into()),
-            ("icon.svg".into(),   "img2".into()),
-            ("roboto.woff2".into(),"fnt1".into()),
-            ("fallback.ttf".into(),"fnt2".into()),
+            ("logo.png".into(), "img1".into()),
+            ("icon.svg".into(), "img2".into()),
+            ("roboto.woff2".into(), "fnt1".into()),
+            ("fallback.ttf".into(), "fnt2".into()),
         ]);
         let v = build_csp_values(&map, "scripthash");
         assert_eq!(v.script_src, "'sha256-scripthash'");
@@ -364,11 +378,11 @@ mod tests {
         "#;
         let csp = build_csp_for_source(html, &test_values());
         assert_eq!(directive(&csp, "script-src"), "'sha256-script'");
-        assert_eq!(directive(&csp, "style-src"),  "'self' 'sha256-css'");
-        assert_eq!(directive(&csp, "img-src"),    "'self' 'sha256-img'");
-        assert_eq!(directive(&csp, "font-src"),   "'self' 'sha256-font'");
-        assert_eq!(directive(&csp, "media-src"),  "'self' 'sha256-media'");
-        assert_eq!(directive(&csp, "frame-src"),  "'self'");
+        assert_eq!(directive(&csp, "style-src"), "'self' 'sha256-css'");
+        assert_eq!(directive(&csp, "img-src"), "'self' 'sha256-img'");
+        assert_eq!(directive(&csp, "font-src"), "'self' 'sha256-font'");
+        assert_eq!(directive(&csp, "media-src"), "'self' 'sha256-media'");
+        assert_eq!(directive(&csp, "frame-src"), "'self'");
     }
 
     #[test]
@@ -376,7 +390,7 @@ mod tests {
         // The HTML is lowercased before checking, so uppercase should still match.
         let html = r#"<IMG SRC="/logo.PNG"><STYLE>BODY {}</STYLE><AUDIO>"#;
         let csp = build_csp_for_source(html, &test_values());
-        assert_eq!(directive(&csp, "img-src"),   "'self' 'sha256-img'");
+        assert_eq!(directive(&csp, "img-src"), "'self' 'sha256-img'");
         assert_eq!(directive(&csp, "style-src"), "'self' 'sha256-css'");
         assert_eq!(directive(&csp, "media-src"), "'self' 'sha256-media'");
     }

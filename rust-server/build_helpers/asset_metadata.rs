@@ -22,6 +22,7 @@ pub(super) fn build_asset_metadata(
     usize,
     bool,
     Vec<bool>,
+    Option<String>,
 ) {
     let mut header_sets: Vec<Vec<(String, String)>> = Vec::new();
     let mut header_set_index: HashMap<String, usize> = HashMap::new();
@@ -29,6 +30,7 @@ pub(super) fn build_asset_metadata(
     let mut asset_header_indices: Vec<usize> = Vec::new();
     let mut use_uncompressed: Vec<bool> = Vec::new();
     let mut has_404 = false;
+    let mut not_found_const_prefix: Option<String> = None;
     let mut max_path_len: usize = 0;
     let mut max_size: usize = 0;
 
@@ -46,9 +48,13 @@ pub(super) fn build_asset_metadata(
             max_path_len = max_path_len.max(path.len());
         }
 
-        if file == "404.html" {
+        let status_code = if file == "404.html" {
             has_404 = true;
-        }
+            not_found_const_prefix = Some(const_prefix.clone());
+            404
+        } else {
+            200
+        };
 
         let gz_name = format!("{file}.gz");
         let gz_path = format!("{gzip_dir}/{gz_name}");
@@ -118,6 +124,7 @@ pub(super) fn build_asset_metadata(
         assets.push(AssetGen {
             const_prefix,
             url_paths,
+            status_code,
         });
     }
 
@@ -129,5 +136,6 @@ pub(super) fn build_asset_metadata(
         max_size,
         has_404,
         use_uncompressed,
+        not_found_const_prefix,
     )
 }

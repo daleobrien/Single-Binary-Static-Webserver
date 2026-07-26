@@ -31,19 +31,20 @@ mod codegen_tests {
             assets: vec![AssetGen {
                 const_prefix: "INDEX_HTML".to_string(),
                 url_paths: vec!["/".to_string(), "/index.html".to_string()],
+                status_code: 200,
             }],
             asset_header_indices: vec![0],
             header_sets: vec![vec![("content-type".to_string(), "text/html".to_string())]],
             version_header_idx: 1,
             version_len: 9,
             not_found_header_idx: 2,
+            not_found_const_prefix: None,
             files: vec!["index.html".to_string()],
             has_404: false,
             max_path_len: 11,
             max_size: 1024,
             use_uncompressed: vec![false],
             version_use_uncompressed: true,
-            not_found_use_uncompressed: false,
         }
     }
 

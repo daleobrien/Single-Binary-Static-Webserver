@@ -75,6 +75,7 @@ pub fn run() {
         max_size,
         has_404,
         use_uncompressed,
+        not_found_const_prefix,
     ) = build_asset_metadata(
         &files,
         &gzip_dir,
@@ -87,20 +88,18 @@ pub fn run() {
     );
 
     // ── Version asset ──
-    let (version_header_idx, version_len, version_use_uncompressed, header_sets) =
+    let (version_header_idx, version_len, version_use_uncompressed, mut header_sets) =
         build_version_headers(&build_version, &gzip_dir, header_sets);
 
-    // ── 404 header set ──
-    let (not_found_header_idx, not_found_use_uncompressed, header_sets) = build_not_found_headers(
-        has_404,
-        &security_headers,
-        &file_hashes,
-        &gzip_dir,
-        &uncompressed_lens,
-        header_sets,
-        &build_version,
-        &csp_values,
-    );
+    let not_found_header_idx = if !has_404 {
+        let (idx, hs) = build_not_found_headers(&security_headers, header_sets, &build_version);
+        header_sets = hs;
+        idx
+    } else {
+        // When 404.html exists, it uses the regular asset headers — no separate
+        // header set is needed.
+        0
+    };
 
     // ── Generate Rust source ──
     let ctx = CodegenCtx {
@@ -113,13 +112,13 @@ pub fn run() {
         version_header_idx,
         version_len,
         not_found_header_idx,
+        not_found_const_prefix,
         files,
         has_404,
         max_path_len,
         max_size,
         use_uncompressed,
         version_use_uncompressed,
-        not_found_use_uncompressed,
     };
     generate(&ctx);
 }

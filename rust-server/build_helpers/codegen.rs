@@ -7,6 +7,7 @@ use super::utils;
 pub struct AssetGen {
     pub const_prefix: String,
     pub url_paths: Vec<String>,
+    pub status_code: u16,
 }
 
 /// All the data needed by the code generator.
@@ -20,13 +21,13 @@ pub struct CodegenCtx {
     pub version_header_idx: usize,
     pub version_len: usize,
     pub not_found_header_idx: usize,
+    pub not_found_const_prefix: Option<String>,
     pub files: Vec<String>,
     pub has_404: bool,
     pub max_path_len: usize,
     pub max_size: usize,
     pub use_uncompressed: Vec<bool>,
     pub version_use_uncompressed: bool,
-    pub not_found_use_uncompressed: bool,
 }
 
 /// Generate the `generated.rs` file with all embedded assets, TLS config, routing, etc.
@@ -51,7 +52,7 @@ pub fn generate(ctx: &CodegenCtx) {
     // ── Version asset ──
     write_version_asset(&mut g, ctx);
 
-    // ── 404 asset ──
+    // ── 404 fallback asset (only when no real 404.html exists) ──
     write_not_found_asset(&mut g, ctx);
 
     // ── Header builder functions ──
@@ -216,51 +217,31 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
 }
 
 fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
+    // Only generate a separate NOT_FOUND asset when there's no real 404.html.
+    // When 404.html exists, it goes through the regular asset pipeline and is
+    // referenced directly by the catch-all route.
     if ctx.has_404 {
-        let (embed_name, body_len) = if ctx.not_found_use_uncompressed {
-            let raw_path = format!("{}/404.html.gz.raw", ctx.gzip_dir);
-            let raw_data = fs::read(&raw_path).expect("failed to read 404 raw");
-            let len = raw_data.len();
-            ("404.html.gz.raw", len)
-        } else {
-            let gz_path = format!("{}/404.html.gz", ctx.gzip_dir);
-            let gz_data = fs::read(&gz_path).expect("failed to read 404 gzip");
-            let len = gz_data.len();
-            ("404.html.gz", len)
-        };
-
-        writeln!(g, "// ── 404 Not Found (from public/404.html) ───────").unwrap();
-        writeln!(
-            g,
-            "const NOT_FOUND_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{embed_name}\"));"
-        )
-        .unwrap();
-        writeln!(g, "const NOT_FOUND_LEN: usize = {body_len};").unwrap();
-        writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{body_len}\";").unwrap();
-        writeln!(
-            g,
-            "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
-        )
-        .unwrap();
-    } else {
-        let body: &[u8] = b"<h1>404 - Not Found</h1>";
-        let len = body.len();
-        let escaped_body = utils::escape_byte_string(body);
-
-        writeln!(
-            g,
-            "// ── 404 Not Found (inline fallback) ────────────────────"
-        )
-        .unwrap();
-        writeln!(g, "const NOT_FOUND_BODY: &[u8] = b\"{escaped_body}\";").unwrap();
-        writeln!(g, "const NOT_FOUND_LEN: usize = {len};").unwrap();
-        writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{len}\";").unwrap();
-        writeln!(
-            g,
-            "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
-        )
-        .unwrap();
+        writeln!(g).unwrap();
+        return;
     }
+
+    let body: &[u8] = b"<h1>404 - Not Found</h1>";
+    let len = body.len();
+    let escaped_body = utils::escape_byte_string(body);
+
+    writeln!(
+        g,
+        "// ── 404 Not Found (inline fallback) ────────────────────"
+    )
+    .unwrap();
+    writeln!(g, "const NOT_FOUND_BODY: &[u8] = b\"{escaped_body}\";").unwrap();
+    writeln!(g, "const NOT_FOUND_LEN: usize = {len};").unwrap();
+    writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{len}\";").unwrap();
+    writeln!(
+        g,
+        "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
+    )
+    .unwrap();
     writeln!(g).unwrap();
 }
 
@@ -322,12 +303,13 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     for (i, a) in ctx.assets.iter().enumerate() {
         let p = &a.const_prefix;
         let hi = ctx.asset_header_indices[i];
+        let sc = a.status_code;
         writeln!(g, "static {p}_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: {p}_BODY,").unwrap();
         writeln!(g, "    content_length: {p}_LEN,").unwrap();
         writeln!(g, "    content_length_str: {p}_LEN_STR,").unwrap();
         writeln!(g, "    content_type: {p}_TYPE,").unwrap();
-        writeln!(g, "    status_code: 200,").unwrap();
+        writeln!(g, "    status_code: {sc},").unwrap();
         writeln!(g, "    header_index: {hi},").unwrap();
         writeln!(g, "}};").unwrap();
         writeln!(g).unwrap();
@@ -344,16 +326,18 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "}};").unwrap();
     writeln!(g).unwrap();
 
-    // 404 instance
-    writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
-    writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
-    writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
-    writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
-    writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
-    writeln!(g, "    status_code: 404,").unwrap();
-    writeln!(g, "    header_index: {},", ctx.not_found_header_idx).unwrap();
-    writeln!(g, "}};").unwrap();
-    writeln!(g).unwrap();
+    // 404 fallback — only when no real 404.html exists
+    if !ctx.has_404 {
+        writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
+        writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
+        writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
+        writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
+        writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
+        writeln!(g, "    status_code: 404,").unwrap();
+        writeln!(g, "    header_index: {},", ctx.not_found_header_idx).unwrap();
+        writeln!(g, "}};").unwrap();
+        writeln!(g).unwrap();
+    }
 }
 
 fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
@@ -367,7 +351,9 @@ fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    &{}_ASSET,", a.const_prefix).unwrap();
     }
     writeln!(g, "    &VERSION_ASSET,").unwrap();
-    writeln!(g, "    &NOT_FOUND_ASSET,").unwrap();
+    if !ctx.has_404 {
+        writeln!(g, "    &NOT_FOUND_ASSET,").unwrap();
+    }
     writeln!(g, "];").unwrap();
     writeln!(g).unwrap();
 }
@@ -390,7 +376,11 @@ fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
         }
     }
     writeln!(g, "        \"/v\" => &VERSION_ASSET,").unwrap();
-    writeln!(g, "        _ => &NOT_FOUND_ASSET,").unwrap();
+    if let Some(ref p) = ctx.not_found_const_prefix {
+        writeln!(g, "        _ => &{p}_ASSET,").unwrap();
+    } else {
+        writeln!(g, "        _ => &NOT_FOUND_ASSET,").unwrap();
+    }
     writeln!(g, "    }}").unwrap();
     writeln!(g, "}}").unwrap();
     writeln!(g).unwrap();

@@ -28,6 +28,8 @@ pub struct CodegenCtx {
     pub max_size: usize,
     pub use_uncompressed: Vec<bool>,
     pub version_use_uncompressed: bool,
+    pub uncompressed_lengths: Vec<usize>,
+    pub version_uncompressed_len: usize,
 }
 
 /// Generate the `generated.rs` file with all embedded assets, TLS config, routing, etc.
@@ -168,6 +170,7 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
             .len() as usize;
         let content_type = utils::mime_for_file(file);
         let const_prefix = utils::file_to_const(file);
+        let uncompressed_len = ctx.uncompressed_lengths[i];
 
         writeln!(
             g,
@@ -185,6 +188,7 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
             "const {const_prefix}_LEN_STR: &str = \"{content_length}\";"
         )
         .unwrap();
+        writeln!(g, "const {const_prefix}_UNCOMPRESSED_LEN: usize = {uncompressed_len};").unwrap();
         writeln!(g, "const {const_prefix}_TYPE: &str = \"{content_type}\";").unwrap();
         writeln!(g).unwrap();
     }
@@ -208,6 +212,12 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     .unwrap();
     writeln!(g, "const VERSION_LEN: usize = {};", ctx.version_len).unwrap();
     writeln!(g, "const VERSION_LEN_STR: &str = \"{}\";", ctx.version_len).unwrap();
+    writeln!(
+        g,
+        "const VERSION_UNCOMPRESSED_LEN: usize = {};",
+        ctx.version_uncompressed_len
+    )
+    .unwrap();
     writeln!(
         g,
         "const VERSION_TYPE: &str = \"text/plain; charset=utf-8\";"
@@ -237,6 +247,11 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "const NOT_FOUND_BODY: &[u8] = b\"{escaped_body}\";").unwrap();
     writeln!(g, "const NOT_FOUND_LEN: usize = {len};").unwrap();
     writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{len}\";").unwrap();
+    writeln!(
+        g,
+        "const NOT_FOUND_UNCOMPRESSED_LEN: usize = {len};",
+    )
+    .unwrap();
     writeln!(
         g,
         "const NOT_FOUND_TYPE: &str = \"text/html; charset=utf-8\";"
@@ -292,6 +307,7 @@ fn write_asset_struct(g: &mut fs::File) {
     writeln!(g, "    pub body: &'static [u8],").unwrap();
     writeln!(g, "    pub content_length: usize,").unwrap();
     writeln!(g, "    pub content_length_str: &'static str,").unwrap();
+    writeln!(g, "    pub uncompressed_length: usize,").unwrap();
     writeln!(g, "    pub content_type: &'static str,").unwrap();
     writeln!(g, "    pub status_code: u16,").unwrap();
     writeln!(g, "    header_index: usize,").unwrap();
@@ -308,6 +324,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    body: {p}_BODY,").unwrap();
         writeln!(g, "    content_length: {p}_LEN,").unwrap();
         writeln!(g, "    content_length_str: {p}_LEN_STR,").unwrap();
+        writeln!(g, "    uncompressed_length: {p}_UNCOMPRESSED_LEN,").unwrap();
         writeln!(g, "    content_type: {p}_TYPE,").unwrap();
         writeln!(g, "    status_code: {sc},").unwrap();
         writeln!(g, "    header_index: {hi},").unwrap();
@@ -320,6 +337,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    body: VERSION_BODY,").unwrap();
     writeln!(g, "    content_length: VERSION_LEN,").unwrap();
     writeln!(g, "    content_length_str: VERSION_LEN_STR,").unwrap();
+    writeln!(g, "    uncompressed_length: VERSION_UNCOMPRESSED_LEN,").unwrap();
     writeln!(g, "    content_type: VERSION_TYPE,").unwrap();
     writeln!(g, "    status_code: 200,").unwrap();
     writeln!(g, "    header_index: {},", ctx.version_header_idx).unwrap();
@@ -332,6 +350,7 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
         writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
         writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
+        writeln!(g, "    uncompressed_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
         writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
         writeln!(g, "    status_code: 404,").unwrap();
         writeln!(g, "    header_index: {},", ctx.not_found_header_idx).unwrap();
@@ -404,4 +423,10 @@ fn write_column_widths(g: &mut fs::File, ctx: &CodegenCtx) {
     )
     .unwrap();
     writeln!(g, "pub const MAX_SIZE_DIGITS: usize = {size_digits};").unwrap();
+    writeln!(
+        g,
+        "/// Max compression-savings percentage digit count (always 3 for 0–100%)."
+    )
+    .unwrap();
+    writeln!(g, "pub const MAX_SAVINGS_DIGITS: usize = 3;").unwrap();
 }

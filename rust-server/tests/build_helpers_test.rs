@@ -45,6 +45,8 @@ mod codegen_tests {
             max_size: 1024,
             use_uncompressed: vec![false],
             version_use_uncompressed: true,
+            uncompressed_lengths: vec![1024],
+            version_uncompressed_len: 9,
         }
     }
 

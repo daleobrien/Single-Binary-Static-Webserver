@@ -84,6 +84,7 @@ pub fn run() {
         has_404,
         use_uncompressed,
         not_found_const_prefix,
+        uncompressed_lengths,
     ) = build_asset_metadata(
         &files,
         &gzip_dir,
@@ -97,7 +98,7 @@ pub fn run() {
     );
 
     // ── Version asset ──
-    let (version_header_idx, version_len, version_use_uncompressed, mut header_sets) =
+    let (version_header_idx, version_len, version_use_uncompressed, mut header_sets, version_uncompressed_len) =
         build_version_headers(&build_version, &gzip_dir, header_sets);
 
     let not_found_header_idx = if !has_404 {
@@ -128,6 +129,8 @@ pub fn run() {
         max_size,
         use_uncompressed,
         version_use_uncompressed,
+        uncompressed_lengths,
+        version_uncompressed_len,
     };
     generate(&ctx);
 }

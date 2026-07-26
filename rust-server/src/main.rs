@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // ── Logging strategy ───────────────────────────────────────────
     let (log_mode, log_handle) =
-        init_logging(summary_mode, MAX_PATH_LEN, MAX_SIZE_DIGITS, shutdown_rx.clone());
+        init_logging(summary_mode, MAX_PATH_LEN, MAX_SIZE_DIGITS, MAX_SAVINGS_DIGITS, shutdown_rx.clone());
 
     // ── Spawn workers ───────────────────────────────────────────────
     let worker_cfg = WorkerConfig {

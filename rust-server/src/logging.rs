@@ -13,9 +13,10 @@ use tokio::sync::mpsc;
 pub(crate) enum LogMode {
     Summary(Arc<AtomicU64>),
     Detailed {
-        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, String)>,
+        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, u64, String)>,
         path_w: usize,
         size_w: usize,
+        save_w: usize,
     },
 }
 
@@ -23,10 +24,11 @@ impl Clone for LogMode {
     fn clone(&self) -> Self {
         match self {
             Self::Summary(c) => Self::Summary(Arc::clone(c)),
-            Self::Detailed { tx, path_w, size_w } => Self::Detailed {
+            Self::Detailed { tx, path_w, size_w, save_w } => Self::Detailed {
                 tx: tx.clone(),
                 path_w: *path_w,
                 size_w: *size_w,
+                save_w: *save_w,
             },
         }
     }
@@ -42,6 +44,7 @@ pub(crate) struct TimingInfo {
     pub(crate) path: String,
     pub(crate) status: u16,
     pub(crate) size: u64,
+    pub(crate) savings: u64,
     pub(crate) protocol: String,
     pub(crate) log_mode: LogMode,
 }
@@ -102,6 +105,7 @@ pub(crate) fn init_logging(
     summary_mode: bool,
     max_path_len: usize,
     max_size_digits: usize,
+    max_savings_digits: usize,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (LogMode, tokio::task::JoinHandle<()>) {
     if summary_mode {
@@ -129,36 +133,40 @@ pub(crate) fn init_logging(
     } else {
         let path_w = max_path_len.max(1);
         let size_w = max_size_digits.max(1);
+        let save_w = max_savings_digits.max(1);
         let (tx, mut rx) =
-            mpsc::unbounded_channel::<(String, String, u16, u64, u64, String)>();
+            mpsc::unbounded_channel::<(String, String, u16, u64, u64, u64, String)>();
 
         let handle = tokio::spawn(async move {
             eprintln!(
-                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  {:>8}",
+                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  {:>save_w$}  {:>8}",
                 "PR",
                 "METHOD",
                 "PATH",
                 "STA",
                 "SIZE",
+                "SAVE",
                 "TIME",
                 path_w = path_w,
                 size_w = size_w,
+                save_w = save_w,
             );
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.tick().await;
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut batch: Vec<(String, String, u16, u64, u64, String)> = Vec::new();
+                        let mut batch: Vec<(String, String, u16, u64, u64, u64, String)> = Vec::new();
                         while let Ok(entry) = rx.try_recv() {
                             batch.push(entry);
                         }
 
-                        for (method, path, status, size, us, protocol) in &batch {
+                        for (method, path, status, size, savings, us, protocol) in &batch {
                             eprintln!(
-                                "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {us:>8} \u{00b5}s",
+                                "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {savings:>save_w$}%  {us:>8} \u{00b5}s",
                                 path_w = path_w,
                                 size_w = size_w,
+                                save_w = save_w,
                             );
                         }
                     }
@@ -167,7 +175,7 @@ pub(crate) fn init_logging(
             }
         });
 
-        (LogMode::Detailed { tx, path_w, size_w }, handle)
+        (LogMode::Detailed { tx, path_w, size_w, save_w }, handle)
     }
 }
 
@@ -184,6 +192,7 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
                     info.path,
                     info.status,
                     info.size,
+                    info.savings,
                     elapsed,
                     info.protocol,
                 ));
@@ -219,12 +228,14 @@ mod tests {
             tx,
             path_w: 42,
             size_w: 7,
+            save_w: 3,
         };
         let b = a.clone();
-        if let LogMode::Detailed { tx, path_w, size_w } = &b {
+        if let LogMode::Detailed { tx, path_w, size_w, save_w } = &b {
             assert_eq!(*path_w, 42);
             assert_eq!(*size_w, 7);
-            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 50_u64, "h1".into()))
+            assert_eq!(*save_w, 3);
+            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 70_u64, 30_u64, "h1".into()))
                 .unwrap();
         }
         let msg = rx.try_recv().unwrap();
@@ -244,6 +255,7 @@ mod tests {
             path: "/".into(),
             status: 200,
             size: 1024,
+            savings: 70,
             protocol: "h1".into(),
             log_mode: LogMode::Summary(Arc::clone(&counter)),
         };
@@ -262,11 +274,13 @@ mod tests {
             path: "/api".into(),
             status: 201,
             size: 512,
+            savings: 50,
             protocol: "h2".into(),
             log_mode: LogMode::Detailed {
                 tx,
                 path_w: 10,
                 size_w: 5,
+                save_w: 3,
             },
         };
         let mut log = Some(info);
@@ -277,9 +291,8 @@ mod tests {
         assert_eq!(msg.0, "POST");
         assert_eq!(msg.1, "/api");
         assert_eq!(msg.2, 201);
-        assert_eq!(msg.5, "h2");
-        // elapsed microseconds (0 is valid for instantaneous operations)
-        assert_eq!(msg.5, "h2");
+        assert_eq!(msg.4, 50);
+        assert_eq!(msg.6, "h2");
     }
 
     #[test]

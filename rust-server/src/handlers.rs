@@ -72,6 +72,7 @@ pub(crate) async fn handle_request(
                 path,
                 status: 304,
                 size: 0,
+                savings: 0,
                 protocol: protocol.to_string(),
                 log_mode,
             }),
@@ -82,6 +83,11 @@ pub(crate) async fn handle_request(
     let asset = route(&path);
     let status = asset.status_code;
     let size = asset.content_length as u64;
+    let savings = if asset.uncompressed_length > 0 {
+        ((asset.uncompressed_length - asset.content_length) * 100 / asset.uncompressed_length) as u64
+    } else {
+        0
+    };
     let resp = build_response(asset);
 
     let (parts, body) = resp.into_parts();
@@ -93,6 +99,7 @@ pub(crate) async fn handle_request(
             path,
             status,
             size,
+            savings,
             protocol: protocol.to_string(),
             log_mode,
         }),
@@ -185,6 +192,7 @@ where
                                     path,
                                     304_u16,
                                     0_u64,
+                                    0_u64,
                                     elapsed,
                                     "h3".to_string(),
                                 ));
@@ -196,6 +204,11 @@ where
                     let asset = route(&path);
                     let status_code = asset.status_code;
                     let content_length = asset.content_length;
+                    let savings = if asset.uncompressed_length > 0 {
+                        ((asset.uncompressed_length - asset.content_length) * 100 / asset.uncompressed_length) as u64
+                    } else {
+                        0
+                    };
 
                     let status = hyper::StatusCode::from_u16(asset.status_code)
                         .unwrap_or(hyper::StatusCode::OK);
@@ -249,6 +262,7 @@ where
                                 path,
                                 status_code,
                                 content_length as u64,
+                                savings as u64,
                                 elapsed,
                                 "h3".to_string(),
                             ));

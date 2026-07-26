@@ -7,7 +7,7 @@ pub(super) fn build_version_headers(
     build_version: &str,
     gzip_dir: &str,
     mut header_sets: Vec<Vec<(String, String)>>,
-) -> (usize, usize, bool, Vec<Vec<(String, String)>>) {
+) -> (usize, usize, bool, Vec<Vec<(String, String)>>, usize) {
     let version_body = build_version.as_bytes().to_vec();
     let version_gz_path = format!("{gzip_dir}/v.txt.gz");
     utils::compress_to_gzip(&version_body, &version_gz_path);
@@ -62,5 +62,6 @@ pub(super) fn build_version_headers(
         version_len,
         version_use_uncomp,
         header_sets,
+        version_body.len(),
     )
 }

@@ -24,6 +24,7 @@ pub(super) fn build_asset_metadata(
     bool,
     Vec<bool>,
     Option<String>,
+    Vec<usize>,
 ) {
     let mut header_sets: Vec<Vec<(String, String)>> = Vec::new();
     let mut header_set_index: HashMap<String, usize> = HashMap::new();
@@ -34,6 +35,7 @@ pub(super) fn build_asset_metadata(
     let mut not_found_const_prefix: Option<String> = None;
     let mut max_path_len: usize = 0;
     let mut max_size: usize = 0;
+    let mut uncompressed_lengths: Vec<usize> = Vec::with_capacity(files.len());
 
     for file in files {
         let content_type = utils::mime_for_file(file);
@@ -77,6 +79,7 @@ pub(super) fn build_asset_metadata(
             (gz_data, len)
         };
         max_size = max_size.max(content_length);
+        uncompressed_lengths.push(uncompressed_len);
 
         // Per-file CSP: every directive is gated on actual page usage.
         let csp_value = csp::build_csp(file, csp_values);
@@ -138,5 +141,6 @@ pub(super) fn build_asset_metadata(
         has_404,
         use_uncompressed,
         not_found_const_prefix,
+        uncompressed_lengths,
     )
 }

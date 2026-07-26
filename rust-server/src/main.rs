@@ -9,7 +9,7 @@ mod tcp_worker;
 mod tls_stream;
 
 use hyper::HeaderMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use config::{PORT, SHUTDOWN_TIMEOUT_SECS, WorkerConfig};
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_cfg = WorkerConfig {
         num_workers,
         port,
-        tls_config: Arc::clone(&tls_config),
+        tls_config: tls_config.clone(),
         log_mode: log_mode.clone(),
         shutdown_rx: shutdown_rx.clone(),
     };

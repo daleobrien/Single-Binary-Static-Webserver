@@ -8,12 +8,11 @@ mod tcp_worker;
 mod tls_stream;
 
 use hyper::HeaderMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use config::{PORT, SHUTDOWN_TIMEOUT_SECS};
-use logging::LogMode;
+use logging::init_logging;
 use tokio_rustls::TlsAcceptor;
 
 // ── Compile-time generated assets ──────────────────────────────────
@@ -56,63 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     // ── Logging strategy ───────────────────────────────────────────
-    let log_mode = if summary_mode {
-        let counter = Arc::new(AtomicU64::new(0));
-        let counter_bg = Arc::clone(&counter);
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                let count = counter_bg.swap(0, Ordering::Relaxed);
-                eprintln!(
-                    "{count} requests in the last 5s ({:.1} req/s)",
-                    count as f64 / 5.0
-                );
-            }
-        });
-
-        LogMode::Summary(counter)
-    } else {
-        let path_w = MAX_PATH_LEN.max(1);
-        let size_w = MAX_SIZE_DIGITS.max(1);
-        let (tx, mut rx) =
-            tokio::sync::mpsc::unbounded_channel::<(String, String, u16, u64, u64, String)>();
-
-        tokio::spawn(async move {
-            eprintln!(
-                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  TIME",
-                "PR",
-                "METHOD",
-                "PATH",
-                "STA",
-                "SIZE",
-                path_w = path_w,
-                size_w = size_w,
-            );
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-
-                let mut batch: Vec<(String, String, u16, u64, u64, String)> = Vec::new();
-                while let Ok(entry) = rx.try_recv() {
-                    batch.push(entry);
-                }
-
-                for (method, path, status, size, us, protocol) in &batch {
-                    eprintln!(
-                        "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {us}\u{00b5}s",
-                        path_w = path_w,
-                        size_w = size_w,
-                    );
-                }
-            }
-        });
-
-        LogMode::Detailed { tx, path_w, size_w }
-    };
+    let log_mode = init_logging(summary_mode, MAX_PATH_LEN, MAX_SIZE_DIGITS);
 
     // ── Spawn workers ───────────────────────────────────────────────
     let mut handles = tcp_worker::spawn_tcp_workers(

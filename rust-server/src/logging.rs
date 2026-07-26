@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Logging strategy: either per-request details or a cheap atomic counter.
@@ -90,6 +90,73 @@ impl Drop for TimedBody {
         // dropped by hyper the socket write has already happened, matching
         // the h3 end-to-end timing scope.
         flush_log(&mut self.log);
+    }
+}
+
+/// Initialise the logging subsystem: spawns a background task that either
+/// counts requests for `--summary` mode or batches per-request details for
+/// the detailed mode. Returns the `LogMode` handle to pass to workers.
+pub(crate) fn init_logging(
+    summary_mode: bool,
+    max_path_len: usize,
+    max_size_digits: usize,
+) -> LogMode {
+    if summary_mode {
+        let counter = Arc::new(AtomicU64::new(0));
+        let counter_bg = Arc::clone(&counter);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let count = counter_bg.swap(0, Ordering::Relaxed);
+                eprintln!(
+                    "{count} requests in the last 5s ({:.1} req/s)",
+                    count as f64 / 5.0
+                );
+            }
+        });
+
+        LogMode::Summary(counter)
+    } else {
+        let path_w = max_path_len.max(1);
+        let size_w = max_size_digits.max(1);
+        let (tx, mut rx) =
+            mpsc::unbounded_channel::<(String, String, u16, u64, u64, String)>();
+
+        tokio::spawn(async move {
+            eprintln!(
+                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  TIME",
+                "PR",
+                "METHOD",
+                "PATH",
+                "STA",
+                "SIZE",
+                path_w = path_w,
+                size_w = size_w,
+            );
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+
+                let mut batch: Vec<(String, String, u16, u64, u64, String)> = Vec::new();
+                while let Ok(entry) = rx.try_recv() {
+                    batch.push(entry);
+                }
+
+                for (method, path, status, size, us, protocol) in &batch {
+                    eprintln!(
+                        "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {us}\u{00b5}s",
+                        path_w = path_w,
+                        size_w = size_w,
+                    );
+                }
+            }
+        });
+
+        LogMode::Detailed { tx, path_w, size_w }
     }
 }
 

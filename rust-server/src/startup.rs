@@ -1,3 +1,5 @@
+use crate::config::HOSTNAME;
+
 /// Prints the CLI help message to stderr and exits.
 pub(crate) fn print_help() -> ! {
     eprintln!("Usage: app [--summary]");
@@ -6,7 +8,8 @@ pub(crate) fn print_help() -> ! {
     eprintln!("  --summary    Log aggregated req/s every 5s instead of per-request details");
     eprintln!("  --help, -h   Show this help message");
     eprintln!();
-    eprintln!("Environment variables:");
+    eprintln!("Build-time environment variables (set at compile time):");
+    eprintln!("  HOSTNAME              Server hostname (default: localhost)");
     eprintln!("  PORT                  Server port (default: 3000)");
     eprintln!("  WORKERS               Number of worker threads (default: available parallelism)");
     eprintln!("  MAX_CONNS             Maximum concurrent TCP connections (default: 1024)");
@@ -18,7 +21,7 @@ pub(crate) fn print_help() -> ! {
 /// asset count, worker count, protocol support, and optional logging mode.
 pub(crate) fn print_banner(port: u16, num_workers: usize, num_assets: usize, summary_mode: bool) {
     eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    eprintln!("  http://localhost:{port}  |  https://localhost:{port}");
+    eprintln!("  http://{HOSTNAME}:{port}  |  https://{HOSTNAME}:{port}");
     eprintln!();
     eprintln!(
         "  {num_assets} assets  ·  {num_workers} workers  ·  SO_REUSEPORT  ·  h1.1 / h2 / h3",

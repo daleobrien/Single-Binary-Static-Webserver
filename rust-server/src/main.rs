@@ -23,10 +23,10 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let port = *PORT;
-    let shutdown_timeout = Duration::from_secs(*SHUTDOWN_TIMEOUT_SECS);
+    let port = PORT;
+    let shutdown_timeout = Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
 
-    let num_workers = *NUM_WORKERS;
+    let num_workers = NUM_WORKERS;
 
     // ── CLI: --help / -h ───────────────────────────────────────────
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {

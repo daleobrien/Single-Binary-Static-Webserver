@@ -93,7 +93,7 @@ pub(crate) fn spawn_tcp_workers(
     let mut handles = Vec::with_capacity(num_workers);
 
     let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
-    let conn_semaphore = Arc::new(tokio::sync::Semaphore::new(*MAX_CONNECTIONS));
+    let conn_semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
 
     for i in 0..num_workers {
         let listener = create_reuseport_listener(port)?;

@@ -1,6 +1,7 @@
 mod asset_metadata;
 mod codegen;
 mod collect;
+mod config_gen;
 mod csp;
 mod html_sri_inject;
 mod minify_hash_compress;
@@ -33,6 +34,9 @@ pub fn run() {
     // Clean and recreate the gzip output directory
     let _ = std::fs::remove_dir_all(&gzip_dir);
     std::fs::create_dir_all(&gzip_dir).expect("failed to create gzip dir");
+
+    // ── Generate server configuration constants ──
+    config_gen::generate(&out_dir);
 
     // ── TLS certificate handling ──
     tls::setup_tls(&out_dir);

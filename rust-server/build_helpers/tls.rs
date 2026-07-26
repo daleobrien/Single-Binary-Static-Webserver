@@ -7,7 +7,8 @@ use rcgen::{date_time_ymd, CertificateParams, DistinguishedName, DnType, KeyPair
 /// Set up TLS certificates.
 ///
 /// If `certs/cert.pem` and `certs/key.pem` exist, they are converted to DER and written
-/// to the output directory. Otherwise a self-signed certificate for localhost is generated.
+/// to the output directory. Otherwise a self-signed certificate is generated using the
+/// `HOSTNAME` env var (defaults to `localhost`).
 pub fn setup_tls(out_dir: &str) {
     let certs_dir = "../certs";
     let cert_der_path = format!("{out_dir}/cert.der");
@@ -36,15 +37,16 @@ pub fn setup_tls(out_dir: &str) {
         fs::write(&cert_der_path, &cert_der).expect("failed to write cert.der");
         fs::write(&key_der_path, &key_der).expect("failed to write key.der");
     } else {
-        eprintln!("build.rs: generating self-signed TLS certificate for localhost");
+        let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".into());
+        eprintln!("build.rs: generating self-signed TLS certificate for {hostname}");
 
-        let mut params = CertificateParams::new(vec!["localhost".to_string()])
+        let mut params = CertificateParams::new(vec![hostname.clone()])
             .expect("failed to create certificate params");
         let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, "localhost");
+        dn.push(DnType::CommonName, &hostname);
         params.distinguished_name = dn;
         params.subject_alt_names = vec![
-            SanType::DnsName("localhost".try_into().unwrap()),
+            SanType::DnsName(hostname.as_str().try_into().unwrap()),
             SanType::IpAddress(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
         ];
         params.not_before = date_time_ymd(2025, 1, 1);

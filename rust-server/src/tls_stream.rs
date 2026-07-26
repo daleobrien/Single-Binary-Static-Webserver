@@ -16,8 +16,8 @@ impl<S: AsyncRead + Unpin> AsyncRead for PrefixedStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if let Some(byte) = self.prefix.take() {
-            if buf.remaining() > 0 {
+        if buf.remaining() > 0 {
+            if let Some(byte) = self.prefix.take() {
                 buf.put_slice(&[byte]);
             }
         }

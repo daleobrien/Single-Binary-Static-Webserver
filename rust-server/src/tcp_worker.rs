@@ -9,7 +9,7 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
-use crate::config::{TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig};
+use crate::config::{MAX_CONNECTIONS, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig};
 use crate::handlers::handle_request;
 use crate::logging::LogMode;
 use crate::sockets::create_reuseport_listener;
@@ -32,13 +32,24 @@ async fn handle_tcp_connection(
         }
     };
 
+    // Disable Nagle's algorithm for lower latency on HTTP responses.
+    if let Err(e) = stream.set_nodelay(true) {
+        eprintln!("set_nodelay error ({}): {e}", addr);
+    }
+
     let prefixed = PrefixedStream {
         prefix: Some(first_byte[0]),
         inner: stream,
     };
 
-    // TLS and plain-HTTP branches share the same hyper serving pattern;
-    // only the stream wrapping differs (TLS handshake vs raw).
+    // Build the HTTP service once, then serve via TLS or plain depending
+    // on the detected protocol. The service_fn is shared between branches;
+    // only `serve_connection` must be duplicated because the IO types differ.
+    let svc = service_fn(move |req: Request<Incoming>| {
+        let log_mode = log_mode.clone();
+        async move { handle_request(req, log_mode).await }
+    });
+
     let result = if is_tls {
         let tls_stream = match tls_acceptor.accept(prefixed).await {
             Ok(tls) => tls,
@@ -47,22 +58,12 @@ async fn handle_tcp_connection(
                 return;
             }
         };
-        let io = TokioIo::new(tls_stream);
-        let svc = service_fn(move |req: Request<Incoming>| {
-            let log_mode = log_mode.clone();
-            async move { handle_request(req, log_mode).await }
-        });
         auto::Builder::new(TokioExecutor::new())
-            .serve_connection(io, svc)
+            .serve_connection(TokioIo::new(tls_stream), svc)
             .await
     } else {
-        let io = TokioIo::new(prefixed);
-        let svc = service_fn(move |req: Request<Incoming>| {
-            let log_mode = log_mode.clone();
-            async move { handle_request(req, log_mode).await }
-        });
         auto::Builder::new(TokioExecutor::new())
-            .serve_connection(io, svc)
+            .serve_connection(TokioIo::new(prefixed), svc)
             .await
     };
 
@@ -72,7 +73,9 @@ async fn handle_tcp_connection(
 }
 
 /// Spawn `num_workers` TCP listener tasks, each on its own SO_REUSEPORT
-/// socket. Returns handles that can be awaited for graceful shutdown.
+/// socket. Incoming connections are limited by a shared semaphore to
+/// prevent unbounded resource usage under load. Returns handles that can
+/// be awaited for graceful shutdown.
 pub(crate) fn spawn_tcp_workers(
     cfg: WorkerConfig,
 ) -> Result<
@@ -90,12 +93,14 @@ pub(crate) fn spawn_tcp_workers(
     let mut handles = Vec::with_capacity(num_workers);
 
     let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
+    let conn_semaphore = Arc::new(tokio::sync::Semaphore::new(*MAX_CONNECTIONS));
 
     for i in 0..num_workers {
         let listener = create_reuseport_listener(port)?;
         let log_mode = log_mode.clone();
         let tls_acceptor = tls_acceptor.clone();
         let mut shutdown_rx = shutdown_rx.clone();
+        let conn_semaphore = Arc::clone(&conn_semaphore);
 
         let handle = tokio::spawn(async move {
             loop {
@@ -114,9 +119,24 @@ pub(crate) fn spawn_tcp_workers(
                     }
                 };
 
+                // Acquire a connection permit before spawning; this provides
+                // backpressure when the concurrent-connection limit is reached.
+                let permit = tokio::select! {
+                    permit = conn_semaphore.clone().acquire_owned() => {
+                        match permit {
+                            Ok(p) => p,
+                            Err(_) => break,
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        break;
+                    }
+                };
+
                 let log_mode = log_mode.clone();
                 let tls_acceptor = tls_acceptor.clone();
                 tokio::task::spawn(async move {
+                    let _permit = permit;
                     handle_tcp_connection(stream, addr, tls_acceptor, log_mode).await;
                 });
             }

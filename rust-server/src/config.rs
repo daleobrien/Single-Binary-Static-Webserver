@@ -25,6 +25,15 @@ pub(crate) static NUM_WORKERS: LazyLock<usize> = LazyLock::new(|| {
 
 pub(crate) const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 0x16;
 
+/// Maximum concurrent TCP connections — configurable via the `MAX_CONNS`
+/// environment variable, defaults to 1024.
+pub(crate) static MAX_CONNECTIONS: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("MAX_CONNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024)
+});
+
 /// Configuration shared by TCP and QUIC worker spawn functions.
 #[derive(Clone)]
 pub(crate) struct WorkerConfig {

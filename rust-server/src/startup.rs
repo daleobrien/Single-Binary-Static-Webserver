@@ -9,6 +9,7 @@ pub(crate) fn print_help() -> ! {
     eprintln!("Environment variables:");
     eprintln!("  PORT                  Server port (default: 3000)");
     eprintln!("  WORKERS               Number of worker threads (default: available parallelism)");
+    eprintln!("  MAX_CONNS             Maximum concurrent TCP connections (default: 1024)");
     eprintln!("  SHUTDOWN_TIMEOUT_SECS Graceful shutdown timeout in seconds (default: 30)");
     std::process::exit(0);
 }

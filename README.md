@@ -78,6 +78,7 @@ At startup, each header-builder function is called exactly once and cached in a 
 | --- | --- | --- |
 | `PORT` | `3000` | Server port (TCP and UDP) |
 | `WORKERS` | *available parallelism* | Number of worker threads (one TCP listener and QUIC endpoint each) |
+| `MAX_CONNS` | `1024` | Maximum concurrent TCP connections (enforced via a shared semaphore) |
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 
 ### Build-time

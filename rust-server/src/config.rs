@@ -1,4 +1,6 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+
+use crate::logging::LogMode;
 
 /// Server port — configurable via the `PORT` environment variable, defaults to 3000.
 pub(crate) static PORT: LazyLock<u16> = LazyLock::new(|| {
@@ -9,6 +11,16 @@ pub(crate) static PORT: LazyLock<u16> = LazyLock::new(|| {
 });
 
 pub(crate) const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 0x16;
+
+/// Configuration shared by TCP and QUIC worker spawn functions.
+#[derive(Clone)]
+pub(crate) struct WorkerConfig {
+    pub num_workers: usize,
+    pub port: u16,
+    pub tls_config: Arc<rustls::ServerConfig>,
+    pub log_mode: LogMode,
+    pub shutdown_rx: tokio::sync::watch::Receiver<bool>,
+}
 
 /// Graceful shutdown: how long the server waits for in-flight requests to complete
 /// after receiving SIGINT/SIGTERM before force-exiting. Configurable via

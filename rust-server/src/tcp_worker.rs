@@ -9,7 +9,7 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
-use crate::config::TLS_CONTENT_TYPE_HANDSHAKE;
+use crate::config::{TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig};
 use crate::handlers::handle_request;
 use crate::logging::LogMode;
 use crate::sockets::create_reuseport_listener;
@@ -74,15 +74,19 @@ async fn handle_tcp_connection(
 /// Spawn `num_workers` TCP listener tasks, each on its own SO_REUSEPORT
 /// socket. Returns handles that can be awaited for graceful shutdown.
 pub(crate) fn spawn_tcp_workers(
-    num_workers: usize,
-    port: u16,
-    tls_config: Arc<rustls::ServerConfig>,
-    log_mode: LogMode,
-    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    cfg: WorkerConfig,
 ) -> Result<
     Vec<tokio::task::JoinHandle<()>>,
     Box<dyn std::error::Error + Send + Sync>,
 > {
+    let WorkerConfig {
+        num_workers,
+        port,
+        tls_config,
+        log_mode,
+        shutdown_rx,
+    } = cfg;
+
     let mut handles = Vec::with_capacity(num_workers);
 
     let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));

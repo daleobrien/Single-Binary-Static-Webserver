@@ -3,20 +3,23 @@ use std::time::Duration;
 
 use h3_quinn::Connection as H3QuinnConnection;
 
+use crate::config::WorkerConfig;
 use crate::handlers::handle_h3_connection;
-use crate::logging::LogMode;
 use crate::sockets::create_reuseport_udp_socket;
 
 /// Spawn `num_workers` QUIC (HTTP/3) listener tasks, each on its own
 /// SO_REUSEPORT UDP socket. Returns handles that can be awaited for
 /// graceful shutdown.
 pub(crate) fn spawn_quic_workers(
-    num_workers: usize,
-    port: u16,
-    tls_config: Arc<rustls::ServerConfig>,
-    log_mode: LogMode,
-    shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) -> Vec<tokio::task::JoinHandle<()>> {
+    cfg: WorkerConfig,
+) -> Result<Vec<tokio::task::JoinHandle<()>>, Box<dyn std::error::Error + Send + Sync>> {
+    let WorkerConfig {
+        num_workers,
+        port,
+        tls_config,
+        log_mode,
+        shutdown_rx,
+    } = cfg;
     let mut handles = Vec::with_capacity(num_workers);
 
     for i in 0..num_workers {
@@ -105,5 +108,5 @@ pub(crate) fn spawn_quic_workers(
         handles.push(handle);
     }
 
-    handles
+    Ok(handles)
 }

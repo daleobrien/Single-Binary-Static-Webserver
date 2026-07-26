@@ -9,10 +9,10 @@ mod tcp_worker;
 mod tls_stream;
 
 use hyper::HeaderMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use config::{PORT, SHUTDOWN_TIMEOUT_SECS};
+use config::{PORT, SHUTDOWN_TIMEOUT_SECS, WorkerConfig};
 use logging::init_logging;
 use shutdown::wait_for_shutdown;
 
@@ -58,21 +58,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let log_mode = init_logging(summary_mode, MAX_PATH_LEN, MAX_SIZE_DIGITS);
 
     // ── Spawn workers ───────────────────────────────────────────────
-    let mut handles = tcp_worker::spawn_tcp_workers(
+    let worker_cfg = WorkerConfig {
         num_workers,
         port,
-        tls_config.clone(),
-        log_mode.clone(),
-        shutdown_rx.clone(),
-    )?;
+        tls_config: Arc::clone(&tls_config),
+        log_mode: log_mode.clone(),
+        shutdown_rx: shutdown_rx.clone(),
+    };
 
-    handles.extend(quic_worker::spawn_quic_workers(
-        num_workers,
-        port,
-        tls_config,
-        log_mode,
-        shutdown_rx,
-    ));
+    let mut handles = tcp_worker::spawn_tcp_workers(worker_cfg.clone())?;
+    handles.extend(quic_worker::spawn_quic_workers(worker_cfg)?);
 
     // ── Wait for shutdown signal ────────────────────────────────────
     wait_for_shutdown(shutdown_tx, handles, shutdown_timeout).await;

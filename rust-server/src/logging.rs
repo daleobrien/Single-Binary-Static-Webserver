@@ -134,12 +134,13 @@ pub(crate) fn init_logging(
 
         let handle = tokio::spawn(async move {
             eprintln!(
-                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  TIME",
+                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  {:>8}",
                 "PR",
                 "METHOD",
                 "PATH",
                 "STA",
                 "SIZE",
+                "TIME",
                 path_w = path_w,
                 size_w = size_w,
             );
@@ -155,7 +156,7 @@ pub(crate) fn init_logging(
 
                         for (method, path, status, size, us, protocol) in &batch {
                             eprintln!(
-                                "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {us}\u{00b5}s",
+                                "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {us:>8} \u{00b5}s",
                                 path_w = path_w,
                                 size_w = size_w,
                             );

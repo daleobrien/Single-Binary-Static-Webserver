@@ -44,13 +44,12 @@ pub fn run() {
         &mut uncompressed_lens,
     );
 
-    // ── CSP and security headers ──
-    let (security_headers, csp_base) =
-        build_security_headers(&file_hashes, &csp_script_hash);
+    // ── Security headers (CSP is built per-file in build_asset_metadata) ──
+    let security_headers = build_non_csp_headers();
 
     // ── Build asset metadata and header deduplication ──
     let (assets, asset_header_indices, header_sets, max_path_len, max_size, has_404, use_uncompressed) =
-        build_asset_metadata(&files, &gzip_dir, &security_headers, &csp_base, &file_hashes, &hashed_filenames, &uncompressed_lens, &build_version);
+        build_asset_metadata(&files, &gzip_dir, &security_headers, &file_hashes, &csp_script_hash, &hashed_filenames, &uncompressed_lens, &build_version);
 
     // ── Version asset ──
     let (version_header_idx, version_len, version_use_uncompressed, header_sets) =
@@ -62,7 +61,7 @@ pub fn run() {
 
     // ── 404 header set ──
     let (not_found_header_idx, not_found_use_uncompressed, header_sets) =
-        build_not_found_headers(has_404, &security_headers, &csp_base, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets, &build_version);
+        build_not_found_headers(has_404, &security_headers, &csp_script_hash, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets, &build_version);
 
     // ── Generate Rust source ──
     let ctx = CodegenCtx {
@@ -225,37 +224,12 @@ fn update_html_sri_and_inject_update_js(
     }
 }
 
-// ── Phase: CSP + security headers ─────────────────────────────────
+// ── Phase: Security headers (no CSP — CSP is built per-file) ─────
 
-fn build_security_headers(
-    file_hashes: &HashMap<String, String>,
-    csp_script_hash: &str,
-) -> (Vec<(String, String)>, String) {
-    let mut csp_css_hashes: Vec<String> = Vec::new();
-    let mut csp_js_hashes: Vec<String> = Vec::new();
-    for (file, hash) in file_hashes {
-        match Path::new(file).extension().and_then(|e| e.to_str()) {
-            Some("css") => csp_css_hashes.push(hash.clone()),
-            Some("js") => csp_js_hashes.push(hash.clone()),
-            _ => {}
-        }
-    }
-
-    let sha = |h: &String| format!("'sha256-{h}'");
-
-    let csp_css_part: String = {
-        let mut parts: Vec<String> = vec!["'self'".into()];
-        parts.extend(csp_css_hashes.iter().map(&sha));
-        parts.join(" ")
-    };
-
-    let csp_js_part: String = {
-        let mut parts: Vec<String> = vec![sha(&csp_script_hash.to_string())];
-        parts.extend(csp_js_hashes.iter().map(&sha));
-        parts.join(" ")
-    };
-
-    let non_csp_headers: Vec<(String, String)> = vec![
+/// Return all security headers that do NOT include the CSP.
+/// The CSP is built per-file in `build_csp` so it reflects actual page usage.
+fn build_non_csp_headers() -> Vec<(String, String)> {
+    vec![
         ("x-content-type-options".into(), "nosniff".into()),
         ("x-frame-options".into(), "DENY".into()),
         ("x-xss-protection".into(), "1; mode=block".into()),
@@ -272,24 +246,85 @@ fn build_security_headers(
             "camera=(), microphone=(), geolocation=()".into(),
         ),
         ("alt-svc".into(), "h3=\\\":3000\\\"".into()),
-    ];
-
-    let csp_base = format!(
-        "default-src 'none'; style-src {csp_css_part}; script-src {csp_js_part}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self'"
-    );
-
-    (non_csp_headers, csp_base)
+    ]
 }
 
-/// Check whether a source HTML file references any images (via `<img>`, `<link rel="icon">`,
-/// or `<link rel="shortcut icon">`). Reads from `../public/` at build time.
-fn page_has_images(file: &str) -> bool {
-    let source = fs::read_to_string(format!("../public/{file}"))
-        .unwrap_or_default();
+/// Build a fully data-driven CSP by analysing the source HTML for referenced
+/// resource types. Non-HTML assets get a minimal `default-src 'none'` —
+/// only the HTML page's CSP governs what the browser loads.
+fn build_csp(
+    file: &str,
+    file_hashes: &HashMap<String, String>,
+    csp_script_hash: &str,
+) -> String {
+    let ext = Path::new(file).extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext != "html" {
+        return "default-src 'none'".to_string();
+    }
+
+    let source = fs::read_to_string(format!("../public/{file}")).unwrap_or_default();
     let lower = source.to_lowercase();
-    lower.contains("<img")
-        || (lower.contains("rel=\"icon\"") || lower.contains("rel='icon'"))
-        || (lower.contains("rel=\"shortcut icon\"") || lower.contains("rel='shortcut icon'"))
+    let sha = |h: &&String| format!("'sha256-{h}'");
+
+    // Collect per-type hashes
+    let css_hashes: Vec<&String> = file_hashes.iter()
+        .filter(|(f, _)| f.ends_with(".css"))
+        .map(|(_, h)| h)
+        .collect();
+    let js_hashes: Vec<&String> = file_hashes.iter()
+        .filter(|(f, _)| f.ends_with(".js"))
+        .map(|(_, h)| h)
+        .collect();
+
+    // Detect page-level usage
+    let has_scripts = true; // version-check script is always injected
+    let has_styles  = lower.contains("stylesheet") || lower.contains("<style");
+    let has_images  = lower.contains("<img")
+        || lower.contains("rel=\"icon\"") || lower.contains("rel='icon'");
+    let has_fonts   = lower.contains("font-") || lower.contains("@font-face");
+    let has_media   = lower.contains("<audio") || lower.contains("<video");
+    let has_frames  = lower.contains("<iframe");
+
+    let mut d: Vec<String> = vec!["default-src 'none'".into()];
+
+    // script-src
+    if has_scripts {
+        let mut parts = vec![sha(&&csp_script_hash.to_string())];
+        parts.extend(js_hashes.iter().map(sha));
+        d.push(format!("script-src {}", parts.join(" ")));
+    } else {
+        d.push("script-src 'none'".into());
+    }
+
+    // style-src
+    if has_styles {
+        let mut parts = vec!["'self'".into()];
+        parts.extend(css_hashes.iter().map(sha));
+        d.push(format!("style-src {}", parts.join(" ")));
+    } else {
+        d.push("style-src 'none'".into());
+    }
+
+    // img-src
+    d.push(if has_images { "img-src 'self'".into() } else { "img-src 'none'".into() });
+
+    // font-src
+    d.push(if has_fonts { "font-src 'self'".into() } else { "font-src 'none'".into() });
+
+    // media-src
+    d.push(if has_media { "media-src 'self'".into() } else { "media-src 'none'".into() });
+
+    // frame-src
+    d.push(if has_frames { "frame-src 'self'".into() } else { "frame-src 'none'".into() });
+
+    // Always-present directives
+    d.push("connect-src 'self'".into());   // version-check script uses fetch
+    d.push("object-src 'none'".into());
+    d.push("base-uri 'self'".into());
+    d.push("form-action 'self'".into());
+    d.push("frame-ancestors 'none'".into());
+
+    d.join("; ")
 }
 
 // ── Phase: Asset metadata ──────────────────────────────────────────
@@ -298,8 +333,8 @@ fn build_asset_metadata(
     files: &[String],
     gzip_dir: &str,
     security_headers: &[(String, String)],
-    csp_base: &str,
     file_hashes: &HashMap<String, String>,
+    csp_script_hash: &str,
     hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
     build_version: &str,
@@ -357,13 +392,8 @@ fn build_asset_metadata(
         };
         max_size = max_size.max(content_length);
 
-        // Per-page CSP: only allow images on pages that actually reference them.
-        let img_src = if content_type.starts_with("text/html") && page_has_images(file) {
-            "img-src 'self'"
-        } else {
-            "img-src 'none'"
-        };
-        let csp_value = format!("{img_src}; {csp_base}");
+        // Per-file CSP: every directive is gated on actual page usage.
+        let csp_value = build_csp(file, file_hashes, csp_script_hash);
 
         // Build header set for this asset
         let mut headers: Vec<(String, String)> = Vec::new();
@@ -492,7 +522,7 @@ fn build_version_headers(
 fn build_not_found_headers(
     has_404: bool,
     security_headers: &[(String, String)],
-    csp_base: &str,
+    csp_script_hash: &str,
     file_hashes: &HashMap<String, String>,
     gzip_dir: &str,
     uncompressed_lens: &HashMap<String, usize>,
@@ -514,9 +544,12 @@ fn build_not_found_headers(
     } else {
         None
     };
-    // 404 pages never reference images — lock down img-src.
-    let csp_value = format!("img-src 'none'; {csp_base}");
-    not_found_headers.push(("content-security-policy".into(), csp_value));
+    // 404 pages get a fully locked-down CSP (no scripts, styles, images).
+    let sha = utils::sha256_base64(csp_script_hash.as_bytes());
+    let csp_404 = format!(
+        "default-src 'none'; script-src 'sha256-{sha}'; style-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    );
+    not_found_headers.push(("content-security-policy".into(), csp_404));
     not_found_headers.extend_from_slice(security_headers);
     not_found_headers.push(("cache-control".into(), "public, max-age=3600".into()));
     not_found_headers.push(("etag".into(), build_version.to_string()));

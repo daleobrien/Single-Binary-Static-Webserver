@@ -15,7 +15,6 @@ use std::time::Duration;
 use config::{PORT, SHUTDOWN_TIMEOUT_SECS};
 use logging::init_logging;
 use shutdown::wait_for_shutdown;
-use tokio_rustls::TlsAcceptor;
 
 // ── Compile-time generated assets ──────────────────────────────────
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
@@ -51,7 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .expect("failed to install ring crypto provider");
 
     let tls_config = build_tls_config();
-    let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
 
     // ── Shutdown coordination ──────────────────────────────────────
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -63,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut handles = tcp_worker::spawn_tcp_workers(
         num_workers,
         port,
-        tls_acceptor,
+        Arc::clone(&tls_config),
         log_mode.clone(),
         shutdown_rx.clone(),
     )?;

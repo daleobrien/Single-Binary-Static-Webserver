@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::Request;
@@ -74,7 +76,7 @@ async fn handle_tcp_connection(
 pub(crate) fn spawn_tcp_workers(
     num_workers: usize,
     port: u16,
-    tls_acceptor: TlsAcceptor,
+    tls_config: Arc<rustls::ServerConfig>,
     log_mode: LogMode,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<
@@ -82,6 +84,8 @@ pub(crate) fn spawn_tcp_workers(
     Box<dyn std::error::Error + Send + Sync>,
 > {
     let mut handles = Vec::with_capacity(num_workers);
+
+    let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
 
     for i in 0..num_workers {
         let listener = create_reuseport_listener(port)?;

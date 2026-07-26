@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>About | Hello World</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+        <div class="container">
+            <nav class="nav">
+                <a href="/">Home</a>
+                <a href="/about" class="active">About</a>
+            </nav>
+
+            <h1>About This Server</h1>
+            <p id="message">
+                This is a sub-page served at <code>/about</code></code> needed in the URL.
+            </p>
+
+            <div class="info-box">
+                <p><strong>Built with:</strong>Rust, zero dependencies</p>
+                <p><strong>Static files served from within the binary</p>
+                <p><strong>Request count:</strong> <span id="requestCount">loading…</span></p>
+            </div>
+        </div>
+
+        <script src="/script.js"></script>
+    </body>
+</html>

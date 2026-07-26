@@ -30,18 +30,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let summary_mode = std::env::args().any(|arg| arg == "--summary");
 
-    eprintln!("Server running at http://localhost:{port}/  and  https://localhost:{port}/");
-    eprintln!("All static files pre-compressed and embedded at compile time.");
+    eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    eprintln!("  http://localhost:{port}  |  https://localhost:{port}");
+    eprintln!();
     eprintln!(
-        "{} assets baked into the binary (routing + header builders + bodies).",
+        "  {} assets  ·  {num_workers} workers  ·  SO_REUSEPORT  ·  h1.1 / h2 / h3",
         ALL_ASSETS.len()
     );
-    eprintln!(
-        "Starting {num_workers} workers with SO_REUSEPORT + auto (plain HTTP, TLS h1.1/h2/h3)"
-    );
     if summary_mode {
-        eprintln!("Log mode: summary (req/s every 5s)");
+        eprintln!("  Log: req/s reported every 5s");
     }
+    eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     LazyLock::force(&HEADER_MAPS);
 

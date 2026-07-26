@@ -194,21 +194,20 @@ fn update_html_sri_and_inject_update_js(
         }
 
         // Replace original filenames with content-hashed versions and
-        // inject integrity="sha256-…" crossorigin="anonymous" on <link>/<script> tags.
+        // inject integrity="sha256-…" crossorigin="anonymous" on <link>/<script>/<img> tags.
+        // Try both href (for <link>) and src (for <script>/<img>) — only the one
+        // present in the HTML will match.
         for (asset_file, hash) in file_hashes.iter() {
             let hashed_name = hashed_filenames
                 .get(asset_file)
                 .map(|s| s.as_str())
                 .unwrap_or(asset_file);
-            let attr = if asset_file.ends_with(".css") {
-                "href"
-            } else {
-                "src"
-            };
-            let pattern = format!("{}=\"/{asset_file}\"", attr);
-            let replacement =
-                format!("{}=\"/{hashed_name}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"", attr);
-            raw_str = raw_str.replace(&pattern, &replacement);
+            for attr in &["href", "src"] {
+                let pattern = format!("{attr}=\"/{asset_file}\"");
+                let replacement =
+                    format!("{attr}=\"/{hashed_name}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"");
+                raw_str = raw_str.replace(&pattern, &replacement);
+            }
         }
 
         raw = raw_str.into_bytes();
@@ -282,12 +281,15 @@ fn build_security_headers(
     (non_csp_headers, csp_base)
 }
 
-/// Check whether a source HTML file references any `<img>` tags.
-/// Reads the raw file from `../public/` — only called for `.html` files at build time.
+/// Check whether a source HTML file references any images (via `<img>`, `<link rel="icon">`,
+/// or `<link rel="shortcut icon">`). Reads from `../public/` at build time.
 fn page_has_images(file: &str) -> bool {
     let source = fs::read_to_string(format!("../public/{file}"))
         .unwrap_or_default();
-    source.to_lowercase().contains("<img")
+    let lower = source.to_lowercase();
+    lower.contains("<img")
+        || (lower.contains("rel=\"icon\"") || lower.contains("rel='icon'"))
+        || (lower.contains("rel=\"shortcut icon\"") || lower.contains("rel='shortcut icon'"))
 }
 
 // ── Phase: Asset metadata ──────────────────────────────────────────

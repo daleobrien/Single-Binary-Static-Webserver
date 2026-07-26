@@ -100,7 +100,7 @@ pub fn sha256_base64(data: &[u8]) -> String {
 #[allow(dead_code)]
 pub fn sha256_hex(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
-    format!("{:x}", digest)
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Create a content-hashed filename like `script.a8f2c3d.js`.

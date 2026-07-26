@@ -8,11 +8,12 @@ use minify_js::{minify as minify_js, Session, TopLevelMode};
 /// HTML minification config, with `minify_js` toggled.
 pub fn html_cfg(minify_js: bool) -> Cfg {
     Cfg {
-        do_not_minify_doctype: false,
-        ensure_spec_compliant_unquoted_attribute_values: true,
+        minify_doctype: true,
+        allow_noncompliant_unquoted_attribute_values: false,
+        allow_optimal_entities: false,
         keep_closing_tags: false,
         keep_html_and_head_opening_tags: false,
-        keep_spaces_between_attributes: true,
+        allow_removing_spaces_between_attributes: false,
         keep_comments: false,
         keep_input_type_text_attr: false,
         keep_ssi_comments: false,
@@ -29,10 +30,18 @@ pub fn html_cfg(minify_js: bool) -> Cfg {
 pub fn minify_file(filename: &str, raw: &[u8]) -> Vec<u8> {
     match Path::new(filename).extension().and_then(|e| e.to_str()) {
         Some("html") => minify_html(raw, &html_cfg(true)),
-        Some("css") => Minifier::default()
-            .minify(&String::from_utf8_lossy(raw), Level::Three)
-            .expect("CSS minification failed")
-            .into_bytes(),
+        Some("css") => {
+            let input = String::from_utf8_lossy(raw).to_string();
+            match Minifier::default().minify(&input, Level::Three) {
+                Ok(minified) => minified.into_bytes(),
+                Err(e) => {
+                    eprintln!(
+                        "warning: CSS minification failed for '{filename}': {e}, falling back to raw content"
+                    );
+                    raw.to_vec()
+                }
+            }
+        }
         Some("js") => {
             let raw_owned = raw.to_vec();
             let raw_fallback = raw_owned.clone();

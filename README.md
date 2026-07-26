@@ -58,20 +58,15 @@ At startup, each header-builder function is called exactly once and cached in a 
 ## Project Structure
 
 ```
-├── certs/                  # Optional: cert.pem + key.pem for custom TLS
-├── public/                 # Your static assets (HTML, CSS, JS, etc.)
-│   ├── 404.html            # Custom 404 page (optional)
-│   ├── index.html
-│   ├── about.html
-│   ├── script.js
-│   └── style.css
-├── rust-server/            # The Rust server
-│   ├── src/main.rs         # Server runtime
-│   ├── build.rs            # Build script entry
-│   ├── build_helpers/      # Minification, SRI, codegen, TLS setup
-│   ├── Dockerfile          # Multi-stage Docker build (FROM scratch)
-│   └── Cargo.toml
-├── go.sh                   # One-liner: docker build + run
+├── certs/           # Optional custom TLS certificates
+├── public/          # Your static assets (HTML, CSS, JS, SVG, etc.)
+├── rust-server/     # The Rust server
+│   ├── Cargo.toml
+│   ├── Dockerfile
+│   ├── build.rs     # Build script (minification, SRI, codegen, TLS)
+│   ├── build_helpers/
+│   └── src/         # Runtime source code
+├── go.sh            # One-liner to either run docker or run locally
 └── README.md
 ```
 

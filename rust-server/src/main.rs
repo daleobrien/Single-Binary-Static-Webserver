@@ -1,222 +1,30 @@
-use bytes::Bytes;
-use http_body_util::Full;
-use hyper::body::{Body, Frame, Incoming};
-use hyper::service::service_fn;
-use hyper::{HeaderMap, Request, Response};
+mod config;
+mod error;
+mod handlers;
+mod logging;
+mod sockets;
+mod tls_stream;
+
+use hyper::body::Incoming;
+use hyper::{HeaderMap, Request};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use h3::server::Connection as H3Connection;
+use hyper::service::service_fn;
 use h3_quinn::Connection as H3QuinnConnection;
-use socket2::{Domain, Protocol, Socket, Type};
-use std::convert::Infallible;
-use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio_rustls::TlsAcceptor;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
-const PORT: u16 = 3000;
-const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 0x16;
-
-/// Logging strategy: either per-request details or a cheap atomic counter.
-enum LogMode {
-    Summary(Arc<AtomicU64>),
-    Detailed {
-        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, String)>,
-        path_w: usize,
-        size_w: usize,
-    },
-}
-
-impl Clone for LogMode {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Summary(c) => Self::Summary(Arc::clone(c)),
-            Self::Detailed { tx, path_w, size_w } => Self::Detailed {
-                tx: tx.clone(),
-                path_w: *path_w,
-                size_w: *size_w,
-            },
-        }
-    }
-}
-
-// ── Full-body timing for h1/h2 ────────────────────────────────────
-
-/// Metadata needed to log a request after its response body has been
-/// fully consumed by hyper (i.e., written to the socket).
-struct TimingInfo {
-    start: Instant,
-    method: String,
-    path: String,
-    status: u16,
-    size: u64,
-    protocol: String,
-    log_mode: LogMode,
-}
-
-/// Wraps a [`Full<Bytes>`] body so the elapsed time is logged when the body
-/// is fully consumed by hyper. This captures the socket-write time that
-/// hyper performs *after* the service handler returns, giving a true
-/// end-to-end measurement comparable with the HTTP/3 path.
-struct TimedBody {
-    inner: Full<Bytes>,
-    log: Option<TimingInfo>,
-}
-
-impl Body for TimedBody {
-    type Data = Bytes;
-    type Error = Infallible;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match Pin::new(&mut self.inner).poll_frame(cx) {
-            Poll::Ready(None) => {
-                // Body fully consumed by hyper — data has been written to the IO stream.
-                // This path fires for HTTP/1 where hyper polls until exhaustion.
-                flush_log(&mut self.log);
-                Poll::Ready(None)
-            }
-            other => other,
-        }
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        self.inner.size_hint()
-    }
-}
-
-impl Drop for TimedBody {
-    fn drop(&mut self) {
-        // Safety net: HTTP/2 uses is_end_stream() to detect body completion
-        // and may never call poll_frame a second time. When the Response is
-        // dropped by hyper the socket write has already happened, matching
-        // the h3 end-to-end timing scope.
-        flush_log(&mut self.log);
-    }
-}
-
-fn flush_log(log: &mut Option<TimingInfo>) {
-    if let Some(info) = log.take() {
-        let elapsed = info.start.elapsed().as_micros() as u64;
-        match &info.log_mode {
-            LogMode::Summary(counter) => {
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
-            LogMode::Detailed { tx, .. } => {
-                let _ = tx.send((
-                    info.method, info.path, info.status, info.size,
-                    elapsed, info.protocol,
-                ));
-            }
-        }
-    }
-}
-
-/// Returns `true` when the error was caused by the client cancelling
-/// (e.g. browser navigated away) — not a real server error worth logging.
-fn is_client_cancel(e: &dyn std::error::Error) -> bool {
-    let msg = e.to_string();
-    msg.contains("H3_REQUEST_CANCELLED")
-        || msg.contains("h3_request_cancelled")
-        || msg.contains("request cancelled")
-        || msg.contains("aborted by peer")
-}
+use config::{PORT, TLS_CONTENT_TYPE_HANDSHAKE};
+use logging::LogMode;
+use sockets::{create_reuseport_listener, create_reuseport_udp_socket};
+use tls_stream::PrefixedStream;
+use handlers::{handle_request, handle_h3_connection};
 
 // ── Compile-time generated assets ──────────────────────────────────
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
-
-#[inline]
-fn build_response(asset: &Asset) -> Response<Full<Bytes>> {
-    let status =
-        hyper::StatusCode::from_u16(asset.status_code).unwrap_or(hyper::StatusCode::OK);
-    let mut resp = Response::new(Full::new(Bytes::from_static(asset.body)));
-    *resp.status_mut() = status;
-    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
-    resp
-}
-
-fn create_reuseport_listener(
-    port: u16,
-) -> Result<TcpListener, Box<dyn std::error::Error + Send + Sync>> {
-    let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
-    socket.set_reuse_port(true)?;
-    socket.set_nonblocking(true)?;
-    socket.bind(&addr.into())?;
-    socket.listen(1024)?;
-    let std_listener: std::net::TcpListener = socket.into();
-    Ok(TcpListener::from_std(std_listener)?)
-}
-
-fn create_reuseport_udp_socket(
-    port: u16,
-) -> Result<UdpSocket, Box<dyn std::error::Error + Send + Sync>> {
-    let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_port(true)?;
-    socket.bind(&addr.into())?;
-    let std_socket: UdpSocket = socket.into();
-    Ok(std_socket)
-}
-
-/// Wraps an async stream so that a previously-read single byte is yielded first,
-/// then the remaining stream data follows. Used for TLS detection: we read one
-/// byte to decide TLS vs plain HTTP, then re-inject it.
-struct PrefixedStream<S> {
-    prefix: Option<u8>,
-    inner: S,
-}
-
-impl<S: AsyncRead + Unpin> AsyncRead for PrefixedStream<S> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if let Some(byte) = self.prefix.take() {
-            if buf.remaining() > 0 {
-                buf.put_slice(&[byte]);
-            }
-        }
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl<S: AsyncWrite + Unpin> AsyncWrite for PrefixedStream<S> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -232,7 +40,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "{} assets baked into the binary (routing + header builders + bodies).",
         ALL_ASSETS.len()
     );
-    eprintln!("Starting {num_workers} workers with SO_REUSEPORT + auto (plain HTTP, TLS h1.1/h2/h3)");
+    eprintln!(
+        "Starting {num_workers} workers with SO_REUSEPORT + auto (plain HTTP, TLS h1.1/h2/h3)"
+    );
     if summary_mode {
         eprintln!("Log mode: summary (req/s every 5s)");
     }
@@ -265,7 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         let path_w = MAX_PATH_LEN.max(1);
         let size_w = MAX_SIZE_DIGITS.max(1);
-        let (tx, mut rx) = mpsc::unbounded_channel::<(String, String, u16, u64, u64, String)>();
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, String, u16, u64, u64, String)>();
 
         tokio::spawn(async move {
             eprintln!(
@@ -340,9 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                                 let svc = service_fn(move |req: Request<Incoming>| {
                                     let log_mode = log_mode.clone();
-                                    async move {
-                                        handle_request(req, log_mode).await
-                                    }
+                                    async move { handle_request(req, log_mode).await }
                                 });
 
                                 if let Err(err) = auto::Builder::new(TokioExecutor::new())
@@ -360,9 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                                 let svc = service_fn(move |req: Request<Incoming>| {
                                     let log_mode = log_mode.clone();
-                                    async move {
-                                        handle_request(req, log_mode).await
-                                    }
+                                    async move { handle_request(req, log_mode).await }
                                 });
 
                                 if let Err(err) = auto::Builder::new(TokioExecutor::new())
@@ -408,7 +215,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         let mut quic_server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_tls_config));
         let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(30_000))));
+        transport
+            .max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(30_000))));
         transport.keep_alive_interval(Some(Duration::from_secs(10)));
         quic_server_config.transport_config(Arc::new(transport));
 
@@ -435,7 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 Ok(conn) => {
                                     let h3_conn = H3QuinnConnection::new(conn);
                                     if let Err(e) = handle_h3_connection(h3_conn, log_mode).await {
-                                        if !is_client_cancel(&*e) {
+                                        if !crate::error::is_client_cancel(&*e) {
                                             eprintln!("h3 connection error: {e}");
                                         }
                                     }
@@ -462,385 +270,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     Ok(())
-}
-
-/// Shared request handler used by both TLS and plain-HTTP connections.
-/// Times from entry until the response body is consumed by hyper
-/// (i.e., after the socket write), matching the h3 end-to-end scope.
-async fn handle_request(
-    req: Request<Incoming>,
-    log_mode: LogMode,
-) -> Result<Response<TimedBody>, Infallible> {
-    let start = Instant::now();
-    let path = req.uri().path().to_owned();
-    let method = req.method().to_string();
-    let protocol = match req.version() {
-        v if v == hyper::Version::HTTP_2 => "h2",
-        _ => "h1",
-    };
-
-    // Conditional version check: return 304 if ETag matches build version
-    if path == "/v" {
-        if let Some(etag) = req.headers().get("if-none-match") {
-            if let Ok(etag_str) = etag.to_str() {
-                if etag_str == BUILD_VERSION {
-                    let mut resp = Response::new(Full::new(Bytes::new()));
-                    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-                    resp.headers_mut().insert(
-                        HeaderName::from_static("etag"),
-                        HeaderValue::from_static(BUILD_VERSION),
-                    );
-                    resp.headers_mut().insert(
-                        HeaderName::from_static("cache-control"),
-                        HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-                    );
-                    let (parts, body) = resp.into_parts();
-                    let timed = TimedBody {
-                        inner: body,
-                        log: Some(TimingInfo {
-                            start,
-                            method,
-                            path,
-                            status: 304,
-                            size: 0,
-                            protocol: protocol.to_string(),
-                            log_mode,
-                        }),
-                    };
-                    return Ok(Response::from_parts(parts, timed));
-                }
-            }
-        }
-    }
-
-    let asset = route(&path);
-    let status = asset.status_code;
-    let size = asset.content_length as u64;
-    let resp = build_response(asset);
-
-    let (parts, body) = resp.into_parts();
-    let timed = TimedBody {
-        inner: body,
-        log: Some(TimingInfo {
-            start,
-            method,
-            path,
-            status,
-            size,
-            protocol: protocol.to_string(),
-            log_mode,
-        }),
-    };
-
-    Ok(Response::from_parts(parts, timed))
-}
-
-/// Handle a single HTTP/3 (QUIC) connection.
-/// Spawns a task per request but defers dropping each `RequestStream`. This
-/// prevents the `RequestEnd` notification from reaching the accept loop before
-/// Quinn's I/O driver has transmitted the FIN packet — the root cause of
-/// Safari showing empty pages over HTTP/3.
-async fn handle_h3_connection<C>(
-    conn: C,
-    log_mode: LogMode,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-where
-    C: h3::quic::Connection<Bytes> + 'static,
-    <C as h3::quic::OpenStreams<Bytes>>::BidiStream: Send + 'static,
-{
-    let mut h3_conn = H3Connection::new(conn).await?;
-
-    // Channel for sending finished RequestStreams back to the main loop
-    // so they can be kept alive until the Quinn I/O driver catches up.
-    type H3Stream<C> = h3::server::RequestStream<
-        <C as h3::quic::OpenStreams<Bytes>>::BidiStream,
-        Bytes,
-    >;
-    let (finished_tx, mut finished_rx) = mpsc::unbounded_channel::<H3Stream<C>>();
-    // Finished streams whose FIN may not have been flushed yet.
-    let mut pending_streams: Vec<H3Stream<C>> = Vec::new();
-
-    loop {
-        // Drain any streams that spawned tasks have finished and sent back.
-        // We keep them alive here (in pending_streams) so their RequestEnd
-        // notification is NOT sent and the accept loop stays alive.
-        while let Ok(stream) = finished_rx.try_recv() {
-            pending_streams.push(stream);
-        }
-
-        match h3_conn.accept().await? {
-            Some(resolver) => {
-                // A new request arrived — Quinn's I/O driver has had at least
-                // one full scheduling window to flush any pending FINs from
-                // previous requests. It's now safe to drop old streams.
-                pending_streams.clear();
-
-                let log_mode = log_mode.clone();
-                let finished_tx = finished_tx.clone();
-                tokio::spawn(async move {
-                    let (req, mut stream) = match resolver.resolve_request().await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            if !is_client_cancel(&e) {
-                                eprintln!("h3 resolve_request error: {e}");
-                            }
-                            return;
-                        }
-                    };
-
-                    // ── Full end-to-end timing (CPU + I/O, matching h1/h2) ──
-                    let start = Instant::now();
-                    let path = req.uri().path().to_owned();
-                    let method = req.method().to_string();
-
-                    // Conditional version check: return 304 if ETag matches
-                    if path == "/v" {
-                        if let Some(etag) = req.headers().get("if-none-match") {
-                            if let Ok(etag_str) = etag.to_str() {
-                                if etag_str == BUILD_VERSION {
-                                    let mut resp = hyper::Response::new(());
-                                    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-                                    resp.headers_mut().insert(
-                                        hyper::header::HeaderName::from_static("etag"),
-                                        hyper::header::HeaderValue::from_static(BUILD_VERSION),
-                                    );
-                                    resp.headers_mut().insert(
-                                        hyper::header::HeaderName::from_static("cache-control"),
-                                        hyper::header::HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-                                    );
-                                    if let Err(e) = stream.send_response(resp).await {
-                                        if !is_client_cancel(&e) {
-                                            eprintln!("h3 send_response error: {e}");
-                                        }
-                                        return;
-                                    }
-                                    if let Err(e) = stream.finish().await {
-                                        if !is_client_cancel(&e) {
-                                            eprintln!("h3 finish error: {e}");
-                                        }
-                                        return;
-                                    }
-                                    let _ = finished_tx.send(stream);
-                                    match &log_mode {
-                                        LogMode::Summary(counter) => {
-                                            counter.fetch_add(1, Ordering::Relaxed);
-                                        }
-                                        LogMode::Detailed { tx, .. } => {
-                                            let elapsed = start.elapsed().as_micros() as u64;
-                                            let _ = tx.send((
-                                                method,
-                                                path,
-                                                304_u16,
-                                                0_u64,
-                                                elapsed,
-                                                "h3".to_string(),
-                                            ));
-                                        }
-                                    }
-                                    return;
-                                }
-                            }
-                        }
-                    }
-
-                    let asset = route(&path);
-                    let status_code = asset.status_code;
-                    let content_length = asset.content_length;
-
-                    let status = hyper::StatusCode::from_u16(asset.status_code)
-                        .unwrap_or(hyper::StatusCode::OK);
-                    let mut resp = hyper::Response::new(());
-                    *resp.status_mut() = status;
-                    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
-                    resp.headers_mut().insert(
-                        hyper::header::CONTENT_LENGTH,
-                        hyper::header::HeaderValue::from_str(&content_length.to_string())
-                            .unwrap_or(hyper::header::HeaderValue::from_static("0")),
-                    );
-
-                    if let Err(e) = stream.send_response(resp).await {
-                        if !is_client_cancel(&e) {
-                            eprintln!("h3 send_response error: {e}");
-                        }
-                        return;
-                    }
-                    if !asset.body.is_empty() {
-                        if let Err(e) = stream.send_data(bytes::Bytes::from_static(asset.body)).await {
-                            if !is_client_cancel(&e) {
-                                eprintln!("h3 send_data error: {e}");
-                            }
-                            return;
-                        }
-                    }
-                    if let Err(e) = stream.finish().await {
-                        if !is_client_cancel(&e) {
-                            eprintln!("h3 finish error: {e}");
-                        }
-                        return;
-                    }
-
-                    // Defer drop: send the stream to the reaper channel instead
-                    // of letting it drop here. The main loop keeps it alive until
-                    // the next request arrives (or the connection closes), giving
-                    // Quinn's I/O driver time to transmit the FIN packet.
-                    let _ = finished_tx.send(stream);
-
-                    // Log full end-to-end: CPU + QUIC I/O, comparable to h1/h2.
-                    match &log_mode {
-                        LogMode::Summary(counter) => {
-                            counter.fetch_add(1, Ordering::Relaxed);
-                        }
-                        LogMode::Detailed { tx, .. } => {
-                            let elapsed = start.elapsed().as_micros() as u64;
-                            let _ = tx.send((
-                                method,
-                                path,
-                                status_code,
-                                content_length as u64,
-                                elapsed,
-                                "h3".to_string(),
-                            ));
-                        }
-                    }
-                });
-            }
-            None => {
-                // No more streams and GOAWAY received. Drop any pending
-                // streams and let the connection close naturally.
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::AtomicU64;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
-
-    // A simple error type for testing is_client_cancel.
-    #[derive(Debug)]
-    struct FakeError(String);
-
-    impl std::fmt::Display for FakeError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self.0)
-        }
-    }
-
-    impl std::error::Error for FakeError {}
-
-    // ── is_client_cancel: classifies client-cancel errors ────────
-
-    #[test]
-    fn client_cancel_detects_known_patterns() {
-        assert!(is_client_cancel(&FakeError("H3_REQUEST_CANCELLED".into())));
-        assert!(is_client_cancel(&FakeError("h3_request_cancelled".into())));
-        assert!(is_client_cancel(&FakeError("request cancelled".into())));
-        assert!(is_client_cancel(&FakeError("aborted by peer".into())));
-    }
-
-    #[test]
-    fn client_cancel_rejects_normal_errors() {
-        assert!(!is_client_cancel(&FakeError("internal server error".into())));
-        assert!(!is_client_cancel(&FakeError("".into())));
-        assert!(!is_client_cancel(&FakeError("h3_request".into())));
-    }
-
-    // ── LogMode Clone ────────────────────────────────────────────
-
-    #[test]
-    fn log_mode_clone_summary_shares_atomic_counter() {
-        let counter = Arc::new(AtomicU64::new(0));
-        let a = LogMode::Summary(Arc::clone(&counter));
-        let b = a.clone();
-        if let LogMode::Summary(c) = &b {
-            c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn log_mode_clone_detailed_shares_sender_and_preserves_widths() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let a = LogMode::Detailed { tx, path_w: 42, size_w: 7 };
-        let b = a.clone();
-        if let LogMode::Detailed { tx, path_w, size_w } = &b {
-            assert_eq!(*path_w, 42);
-            assert_eq!(*size_w, 7);
-            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 50_u64, "h1".into())).unwrap();
-        }
-        let msg = rx.try_recv().unwrap();
-        assert_eq!(msg.0, "GET");
-        assert_eq!(msg.1, "/t");
-        assert_eq!(msg.2, 200);
-    }
-
-    // ── flush_log: dispatches to summary or detailed logging ─────
-
-    #[test]
-    fn flush_log_summary_increments_counter_and_consumes_option() {
-        let counter = Arc::new(AtomicU64::new(0));
-        let info = TimingInfo {
-            start: std::time::Instant::now(),
-            method: "GET".into(),
-            path: "/".into(),
-            status: 200,
-            size: 1024,
-            protocol: "h1".into(),
-            log_mode: LogMode::Summary(Arc::clone(&counter)),
-        };
-        let mut log = Some(info);
-        flush_log(&mut log);
-        assert!(log.is_none());
-        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn flush_log_detailed_sends_on_channel() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let info = TimingInfo {
-            start: std::time::Instant::now(),
-            method: "POST".into(),
-            path: "/api".into(),
-            status: 201,
-            size: 512,
-            protocol: "h2".into(),
-            log_mode: LogMode::Detailed { tx, path_w: 10, size_w: 5 },
-        };
-        let mut log = Some(info);
-        flush_log(&mut log);
-        assert!(log.is_none());
-
-        let msg = rx.try_recv().unwrap();
-        assert_eq!(msg.0, "POST");
-        assert_eq!(msg.1, "/api");
-        assert_eq!(msg.2, 201);
-        assert_eq!(msg.5, "h2");
-        // elapsed microseconds (0 is valid for instantaneous operations)
-        assert_eq!(msg.5, "h2");
-    }
-
-    #[test]
-    fn flush_log_none_is_noop() {
-        let mut log: Option<TimingInfo> = None;
-        flush_log(&mut log);
-        assert!(log.is_none());
-    }
-
-    // ── Constants ────────────────────────────────────────────────
-
-    #[test]
-    fn port_is_3000() {
-        assert_eq!(PORT, 3000);
-    }
-
-    #[test]
-    fn tls_handshake_byte_is_0x16() {
-        assert_eq!(TLS_CONTENT_TYPE_HANDSHAKE, 0x16);
-    }
 }

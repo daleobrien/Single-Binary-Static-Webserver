@@ -45,12 +45,12 @@ pub fn run() {
     );
 
     // ── CSP and security headers ──
-    let security_headers =
+    let (security_headers, csp_base) =
         build_security_headers(&file_hashes, &csp_script_hash);
 
     // ── Build asset metadata and header deduplication ──
     let (assets, asset_header_indices, header_sets, max_path_len, max_size, has_404, use_uncompressed) =
-        build_asset_metadata(&files, &gzip_dir, &security_headers, &file_hashes, &hashed_filenames, &uncompressed_lens, &build_version);
+        build_asset_metadata(&files, &gzip_dir, &security_headers, &csp_base, &file_hashes, &hashed_filenames, &uncompressed_lens, &build_version);
 
     // ── Version asset ──
     let (version_header_idx, version_len, version_use_uncompressed, header_sets) =
@@ -62,7 +62,7 @@ pub fn run() {
 
     // ── 404 header set ──
     let (not_found_header_idx, not_found_use_uncompressed, header_sets) =
-        build_not_found_headers(has_404, &security_headers, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets, &build_version);
+        build_not_found_headers(has_404, &security_headers, &csp_base, &file_hashes, &gzip_dir, &uncompressed_lens, header_sets, &build_version);
 
     // ── Generate Rust source ──
     let ctx = CodegenCtx {
@@ -231,7 +231,7 @@ fn update_html_sri_and_inject_update_js(
 fn build_security_headers(
     file_hashes: &HashMap<String, String>,
     csp_script_hash: &str,
-) -> Vec<(String, String)> {
+) -> (Vec<(String, String)>, String) {
     let mut csp_css_hashes: Vec<String> = Vec::new();
     let mut csp_js_hashes: Vec<String> = Vec::new();
     for (file, hash) in file_hashes {
@@ -242,34 +242,21 @@ fn build_security_headers(
         }
     }
 
+    let sha = |h: &String| format!("'sha256-{h}'");
+
     let csp_css_part: String = {
         let mut parts: Vec<String> = vec!["'self'".into()];
-        parts.extend(
-            csp_css_hashes
-                .iter()
-                .map(|h| format!("'sha256-{h}'"))
-                .collect::<Vec<_>>(),
-        );
+        parts.extend(csp_css_hashes.iter().map(&sha));
         parts.join(" ")
     };
 
     let csp_js_part: String = {
-        let mut parts: Vec<String> =
-            vec![format!("'sha256-{csp_script_hash}'")];
-        parts.extend(
-            csp_js_hashes
-                .iter()
-                .map(|h| format!("'sha256-{h}'"))
-                .collect::<Vec<_>>(),
-        );
+        let mut parts: Vec<String> = vec![sha(&csp_script_hash.to_string())];
+        parts.extend(csp_js_hashes.iter().map(&sha));
         parts.join(" ")
     };
 
-    let csp_value = format!(
-        "default-src 'none'; style-src {csp_css_part}; script-src {csp_js_part}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self'"
-    );
-
-    let security_headers: Vec<(String, String)> = vec![
+    let non_csp_headers: Vec<(String, String)> = vec![
         ("x-content-type-options".into(), "nosniff".into()),
         ("x-frame-options".into(), "DENY".into()),
         ("x-xss-protection".into(), "1; mode=block".into()),
@@ -281,7 +268,6 @@ fn build_security_headers(
             "strict-transport-security".into(),
             "max-age=31536000; includeSubDomains".into(),
         ),
-        ("content-security-policy".into(), csp_value),
         (
             "permissions-policy".into(),
             "camera=(), microphone=(), geolocation=()".into(),
@@ -289,7 +275,19 @@ fn build_security_headers(
         ("alt-svc".into(), "h3=\\\":3000\\\"".into()),
     ];
 
-    security_headers
+    let csp_base = format!(
+        "default-src 'none'; style-src {csp_css_part}; script-src {csp_js_part}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self'"
+    );
+
+    (non_csp_headers, csp_base)
+}
+
+/// Check whether a source HTML file references any `<img>` tags.
+/// Reads the raw file from `../public/` — only called for `.html` files at build time.
+fn page_has_images(file: &str) -> bool {
+    let source = fs::read_to_string(format!("../public/{file}"))
+        .unwrap_or_default();
+    source.to_lowercase().contains("<img")
 }
 
 // ── Phase: Asset metadata ──────────────────────────────────────────
@@ -298,6 +296,7 @@ fn build_asset_metadata(
     files: &[String],
     gzip_dir: &str,
     security_headers: &[(String, String)],
+    csp_base: &str,
     file_hashes: &HashMap<String, String>,
     hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
@@ -356,16 +355,25 @@ fn build_asset_metadata(
         };
         max_size = max_size.max(content_length);
 
+        // Per-page CSP: only allow images on pages that actually reference them.
+        let img_src = if content_type.starts_with("text/html") && page_has_images(file) {
+            "img-src 'self'"
+        } else {
+            "img-src 'none'"
+        };
+        let csp_value = format!("{img_src}; {csp_base}");
+
         // Build header set for this asset
         let mut headers: Vec<(String, String)> = Vec::new();
         headers.push(("content-type".into(), content_type.into()));
         if !use_uncomp {
             headers.push(("content-encoding".into(), "gzip".into()));
         }
+        headers.push(("content-security-policy".into(), csp_value));
         headers.extend_from_slice(security_headers);
 
         // Cache-Control per file
-        let cache_control = if content_type == "text/html" {
+        let cache_control = if content_type.starts_with("text/html") {
             "public, max-age=3600"
         } else {
             "public, max-age=31536000, immutable"
@@ -482,6 +490,7 @@ fn build_version_headers(
 fn build_not_found_headers(
     has_404: bool,
     security_headers: &[(String, String)],
+    csp_base: &str,
     file_hashes: &HashMap<String, String>,
     gzip_dir: &str,
     uncompressed_lens: &HashMap<String, usize>,
@@ -503,6 +512,9 @@ fn build_not_found_headers(
     } else {
         None
     };
+    // 404 pages never reference images — lock down img-src.
+    let csp_value = format!("img-src 'none'; {csp_base}");
+    not_found_headers.push(("content-security-policy".into(), csp_value));
     not_found_headers.extend_from_slice(security_headers);
     not_found_headers.push(("cache-control".into(), "public, max-age=3600".into()));
     not_found_headers.push(("etag".into(), build_version.to_string()));

@@ -48,6 +48,11 @@ body {
   color: white;
 }
 
+.about-img {
+  margin-bottom: 1.5rem;
+  filter: drop-shadow(0 4px 12px rgba(102, 126, 234, 0.3));
+}
+
 .info-box {
   background: #f8f9fa;
   border-radius: 8px;

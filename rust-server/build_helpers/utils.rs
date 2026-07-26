@@ -9,11 +9,38 @@ use flate2::Compression;
 use sha2::{Digest, Sha256};
 
 /// Map a filename's extension to its MIME type.
+/// Text types include `charset=utf-8` so callers do not need to append it separately.
 pub fn mime_for_file(filename: &str) -> &'static str {
     match Path::new(filename).extension().and_then(|e| e.to_str()) {
-        Some("html") => "text/html",
-        Some("css") => "text/css",
-        Some("js") => "text/javascript",
+        // Text
+        Some("html") => "text/html; charset=utf-8",
+        Some("css")  => "text/css; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("xml")  => "application/xml",
+        Some("txt")  => "text/plain; charset=utf-8",
+        Some("csv")  => "text/csv; charset=utf-8",
+        Some("svg")  => "image/svg+xml",
+        // Images
+        Some("png")  => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif")  => "image/gif",
+        Some("webp") => "image/webp",
+        Some("ico")  => "image/x-icon",
+        Some("avif") => "image/avif",
+        // Fonts
+        Some("woff")  => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf")   => "font/ttf",
+        Some("otf")   => "font/otf",
+        // Other
+        Some("wasm") => "application/wasm",
+        Some("pdf")  => "application/pdf",
+        Some("mp4")  => "video/mp4",
+        Some("webm") => "video/webm",
+        // Audio
+        Some("mp3")  => "audio/mpeg",
+        Some("ogg")  => "audio/ogg",
         _ => "application/octet-stream",
     }
 }
@@ -127,17 +154,52 @@ mod tests {
     // ── mime_for_file: project's extension → MIME mapping ──────────
 
     #[test]
-    fn mime_for_known_extensions() {
-        assert_eq!(mime_for_file("index.html"), "text/html");
-        assert_eq!(mime_for_file("style.css"), "text/css");
-        assert_eq!(mime_for_file("script.js"), "text/javascript");
+    fn mime_text_types_include_charset() {
+        assert_eq!(mime_for_file("index.html"), "text/html; charset=utf-8");
+        assert_eq!(mime_for_file("style.css"), "text/css; charset=utf-8");
+        assert_eq!(mime_for_file("script.js"), "text/javascript; charset=utf-8");
+        assert_eq!(mime_for_file("module.mjs"), "text/javascript; charset=utf-8");
+        assert_eq!(mime_for_file("readme.txt"), "text/plain; charset=utf-8");
+        assert_eq!(mime_for_file("data.csv"), "text/csv; charset=utf-8");
+    }
+
+    #[test]
+    fn mime_image_types() {
+        assert_eq!(mime_for_file("icon.png"), "image/png");
+        assert_eq!(mime_for_file("photo.jpg"), "image/jpeg");
+        assert_eq!(mime_for_file("photo.jpeg"), "image/jpeg");
+        assert_eq!(mime_for_file("anim.gif"), "image/gif");
+        assert_eq!(mime_for_file("hero.webp"), "image/webp");
+        assert_eq!(mime_for_file("favicon.ico"), "image/x-icon");
+        assert_eq!(mime_for_file("photo.avif"), "image/avif");
+        assert_eq!(mime_for_file("logo.svg"), "image/svg+xml");
+    }
+
+    #[test]
+    fn mime_font_types() {
+        assert_eq!(mime_for_file("font.woff"), "font/woff");
+        assert_eq!(mime_for_file("font.woff2"), "font/woff2");
+        assert_eq!(mime_for_file("font.ttf"), "font/ttf");
+        assert_eq!(mime_for_file("font.otf"), "font/otf");
+    }
+
+    #[test]
+    fn mime_other_types() {
+        assert_eq!(mime_for_file("lib.wasm"), "application/wasm");
+        assert_eq!(mime_for_file("doc.pdf"), "application/pdf");
+        assert_eq!(mime_for_file("data.json"), "application/json");
+        assert_eq!(mime_for_file("feed.xml"), "application/xml");
+        assert_eq!(mime_for_file("video.mp4"), "video/mp4");
+        assert_eq!(mime_for_file("video.webm"), "video/webm");
+        assert_eq!(mime_for_file("song.mp3"), "audio/mpeg");
+        assert_eq!(mime_for_file("sound.ogg"), "audio/ogg");
     }
 
     #[test]
     fn mime_falls_back_to_octet_stream() {
-        assert_eq!(mime_for_file("image.png"), "application/octet-stream");
         assert_eq!(mime_for_file("README"), "application/octet-stream");
         assert_eq!(mime_for_file(""), "application/octet-stream");
+        assert_eq!(mime_for_file("file.xyz"), "application/octet-stream");
     }
 
     // ── file_to_const: filename → Rust const identifier ──────────

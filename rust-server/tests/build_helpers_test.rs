@@ -11,6 +11,9 @@ mod processing;
 #[path = "../build_helpers/codegen.rs"]
 mod codegen;
 
+#[path = "../build_helpers/csp.rs"]
+mod csp;
+
 // ── codegen module tests ──────────────────────────────────────────
 
 #[cfg(test)]

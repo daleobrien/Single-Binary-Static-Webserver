@@ -1,4 +1,5 @@
 mod codegen;
+mod csp;
 mod processing;
 mod tls;
 mod utils;
@@ -249,83 +250,7 @@ fn build_non_csp_headers() -> Vec<(String, String)> {
     ]
 }
 
-/// Build a fully data-driven CSP by analysing the source HTML for referenced
-/// resource types. Non-HTML assets get a minimal `default-src 'none'` —
-/// only the HTML page's CSP governs what the browser loads.
-fn build_csp(
-    file: &str,
-    file_hashes: &HashMap<String, String>,
-    csp_script_hash: &str,
-) -> String {
-    let ext = Path::new(file).extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext != "html" {
-        return "default-src 'none'".to_string();
-    }
 
-    let source = fs::read_to_string(format!("../public/{file}")).unwrap_or_default();
-    let lower = source.to_lowercase();
-    let sha = |h: &&String| format!("'sha256-{h}'");
-
-    // Collect per-type hashes
-    let css_hashes: Vec<&String> = file_hashes.iter()
-        .filter(|(f, _)| f.ends_with(".css"))
-        .map(|(_, h)| h)
-        .collect();
-    let js_hashes: Vec<&String> = file_hashes.iter()
-        .filter(|(f, _)| f.ends_with(".js"))
-        .map(|(_, h)| h)
-        .collect();
-
-    // Detect page-level usage
-    let has_scripts = true; // version-check script is always injected
-    let has_styles  = lower.contains("stylesheet") || lower.contains("<style");
-    let has_images  = lower.contains("<img")
-        || lower.contains("rel=\"icon\"") || lower.contains("rel='icon'");
-    let has_fonts   = lower.contains("font-") || lower.contains("@font-face");
-    let has_media   = lower.contains("<audio") || lower.contains("<video");
-    let has_frames  = lower.contains("<iframe");
-
-    let mut d: Vec<String> = vec!["default-src 'none'".into()];
-
-    // script-src
-    if has_scripts {
-        let mut parts = vec![sha(&&csp_script_hash.to_string())];
-        parts.extend(js_hashes.iter().map(sha));
-        d.push(format!("script-src {}", parts.join(" ")));
-    } else {
-        d.push("script-src 'none'".into());
-    }
-
-    // style-src
-    if has_styles {
-        let mut parts = vec!["'self'".into()];
-        parts.extend(css_hashes.iter().map(sha));
-        d.push(format!("style-src {}", parts.join(" ")));
-    } else {
-        d.push("style-src 'none'".into());
-    }
-
-    // img-src
-    d.push(if has_images { "img-src 'self'".into() } else { "img-src 'none'".into() });
-
-    // font-src
-    d.push(if has_fonts { "font-src 'self'".into() } else { "font-src 'none'".into() });
-
-    // media-src
-    d.push(if has_media { "media-src 'self'".into() } else { "media-src 'none'".into() });
-
-    // frame-src
-    d.push(if has_frames { "frame-src 'self'".into() } else { "frame-src 'none'".into() });
-
-    // Always-present directives
-    d.push("connect-src 'self'".into());   // version-check script uses fetch
-    d.push("object-src 'none'".into());
-    d.push("base-uri 'self'".into());
-    d.push("form-action 'self'".into());
-    d.push("frame-ancestors 'none'".into());
-
-    d.join("; ")
-}
 
 // ── Phase: Asset metadata ──────────────────────────────────────────
 
@@ -355,6 +280,9 @@ fn build_asset_metadata(
     let mut has_404 = false;
     let mut max_path_len: usize = 0;
     let mut max_size: usize = 0;
+
+    // Pre-compute CSP directive values once rather than re-filtering per file.
+    let csp_values = csp::build_csp_values(file_hashes, csp_script_hash);
 
     for file in files {
         let content_type = utils::mime_for_file(file);
@@ -393,7 +321,7 @@ fn build_asset_metadata(
         max_size = max_size.max(content_length);
 
         // Per-file CSP: every directive is gated on actual page usage.
-        let csp_value = build_csp(file, file_hashes, csp_script_hash);
+        let csp_value = csp::build_csp(file, &csp_values);
 
         // Build header set for this asset
         let mut headers: Vec<(String, String)> = Vec::new();

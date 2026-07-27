@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+# Build the React frontend with production settings
+echo ">>> Building React app (production)..."
+cd react-app && npm install && npm run build && cd ..
+
 if [ "${1:-}" = "--docker" ]; then
     docker build -f "rust-server/Dockerfile" -t app-rust .
     docker run -p 3000:3000 --rm app-rust

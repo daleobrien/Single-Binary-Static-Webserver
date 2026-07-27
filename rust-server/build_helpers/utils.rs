@@ -49,7 +49,11 @@ pub fn mime_for_file(filename: &str) -> &'static str {
 ///
 /// Example: `"script.js"` → `"SCRIPT_JS"`, `"404.html"` → `"F_404_HTML"`
 pub fn file_to_const(filename: &str) -> String {
-    let s = filename.replace('.', "_").replace('-', "_").to_uppercase();
+    let s = filename
+        .replace('/', "_")
+        .replace('.', "_")
+        .replace('-', "_")
+        .to_uppercase();
     // Rust identifiers cannot start with a digit
     if s.starts_with(|c: char| c.is_ascii_digit()) {
         format!("F_{s}")
@@ -105,18 +109,29 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Create a content-hashed filename like `script.a8f2c3d.js`.
 /// `hex_hash` is the full hex SHA-256 digest; we take the first 8 characters.
+/// Preserves any directory prefix (e.g. `images/icon.svg` → `images/icon.a8f2c3d.svg`).
 pub fn hashed_filename(filename: &str, hex_hash: &str) -> String {
     let short_hash = &hex_hash[..8.min(hex_hash.len())];
     let path = Path::new(filename);
     let stem = path.file_stem().unwrap().to_str().unwrap();
     let ext = path.extension().unwrap().to_str().unwrap();
-    format!("{stem}.{short_hash}.{ext}")
+    let hashed = format!("{stem}.{short_hash}.{ext}");
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            format!("{}/{hashed}", parent.to_str().unwrap())
+        }
+        _ => hashed,
+    }
 }
 
 /// Gzip-compress `data` at the highest compression level.
 /// Writes the compressed output to `path` and the uncompressed input to `{path}.raw`.
 /// Returns the size of the compressed output.
 pub fn compress_to_gzip(data: &[u8], path: &str) -> usize {
+    // Ensure parent directories exist for nested paths (e.g. images/nested-test.svg.gz)
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent).expect("failed to create gzip parent directory");
+    }
     let mut encoder = GzEncoder::new(Vec::with_capacity(data.len()), Compression::best());
     encoder.write_all(data).expect("gzip write failed");
     let compressed = encoder.finish().expect("gzip finish failed");
@@ -221,6 +236,15 @@ mod tests {
         assert_eq!(file_to_const("404.html"), "F_404_HTML");
     }
 
+    #[test]
+    fn file_to_const_handles_nested_paths() {
+        assert_eq!(
+            file_to_const("images/nested-test.svg"),
+            "IMAGES_NESTED_TEST_SVG"
+        );
+        assert_eq!(file_to_const("css/theme.css"), "CSS_THEME_CSS");
+    }
+
     // ── url_paths_for_file: URL routing aliases ──────────────────
 
     #[test]
@@ -270,6 +294,18 @@ mod tests {
     fn hashed_filename_handles_short_hash() {
         assert_eq!(hashed_filename("file.js", "abc"), "file.abc.js");
         assert_eq!(hashed_filename("file.js", ""), "file..js");
+    }
+
+    #[test]
+    fn hashed_filename_preserves_directory_prefix() {
+        assert_eq!(
+            hashed_filename("images/icon.svg", "abc123def4567890"),
+            "images/icon.abc123de.svg"
+        );
+        assert_eq!(
+            hashed_filename("css/theme.css", "ff00ff00ff00ff00"),
+            "css/theme.ff00ff00.css"
+        );
     }
 
     // ── compress_to_gzip: verify valid gzip + raw copy ───────────

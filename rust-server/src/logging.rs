@@ -13,7 +13,8 @@ use tokio::sync::mpsc;
 pub(crate) enum LogMode {
     Summary(Arc<AtomicU64>),
     Detailed {
-        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, u64, String)>,
+        /// Channel: (method, path, status, size, savings, elapsed_us, protocol)
+        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, u64, &'static str)>,
         path_w: usize,
         size_w: usize,
         save_w: usize,
@@ -45,7 +46,7 @@ pub(crate) struct TimingInfo {
     pub(crate) status: u16,
     pub(crate) size: u64,
     pub(crate) savings: u64,
-    pub(crate) protocol: String,
+    pub(crate) protocol: &'static str,
     pub(crate) log_mode: LogMode,
 }
 
@@ -135,7 +136,7 @@ pub(crate) fn init_logging(
         let size_w = max_size_digits.max(1);
         let save_w = max_savings_digits.max(1);
         let (tx, mut rx) =
-            mpsc::unbounded_channel::<(String, String, u16, u64, u64, u64, String)>();
+            mpsc::unbounded_channel::<(String, String, u16, u64, u64, u64, &'static str)>();
 
         let handle = tokio::spawn(async move {
             eprintln!(
@@ -153,10 +154,15 @@ pub(crate) fn init_logging(
             );
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.tick().await;
+            // Pre-allocate batch vec with a reasonable capacity to avoid
+            // repeated reallocations under load. Even if we over-allocate,
+            // the vec is short-lived (dropped after each 1s interval).
+            let mut batch: Vec<(String, String, u16, u64, u64, u64, &'static str)> =
+                Vec::with_capacity(1024);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut batch: Vec<(String, String, u16, u64, u64, u64, String)> = Vec::new();
+                        batch.clear();
                         while let Ok(entry) = rx.try_recv() {
                             batch.push(entry);
                         }
@@ -187,6 +193,7 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
                 counter.fetch_add(1, Ordering::Relaxed);
             }
             LogMode::Detailed { tx, .. } => {
+                // protocol is &'static str — no allocation needed
                 let _ = tx.send((
                     info.method,
                     info.path,
@@ -235,7 +242,7 @@ mod tests {
             assert_eq!(*path_w, 42);
             assert_eq!(*size_w, 7);
             assert_eq!(*save_w, 3);
-            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 70_u64, 30_u64, "h1".into()))
+            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 70_u64, 30_u64, "h1"))
                 .unwrap();
         }
         let msg = rx.try_recv().unwrap();
@@ -256,7 +263,7 @@ mod tests {
             status: 200,
             size: 1024,
             savings: 70,
-            protocol: "h1".into(),
+            protocol: "h1",
             log_mode: LogMode::Summary(Arc::clone(&counter)),
         };
         let mut log = Some(info);
@@ -275,7 +282,7 @@ mod tests {
             status: 201,
             size: 512,
             savings: 50,
-            protocol: "h2".into(),
+            protocol: "h2",
             log_mode: LogMode::Detailed {
                 tx,
                 path_w: 10,

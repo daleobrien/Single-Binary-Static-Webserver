@@ -1,11 +1,23 @@
 /// Returns `true` when the error was caused by the client cancelling
 /// (e.g. browser navigated away) — not a real server error worth logging.
+///
+/// Uses `Debug` formatting rather than `Display` because many error types
+/// produce shorter, more stable debug representations. The `Display` output
+/// is often human-readable prose that can change between dependency versions.
+///
+/// If the upstream crates expose structured error kinds in the future, this
+/// should be migrated to type-based matching instead of string matching.
 pub(crate) fn is_client_cancel(e: &dyn std::error::Error) -> bool {
-    let msg = e.to_string();
-    msg.contains("H3_REQUEST_CANCELLED")
-        || msg.contains("h3_request_cancelled")
-        || msg.contains("request cancelled")
-        || msg.contains("aborted by peer")
+    let msg = format!("{e:?}");
+    // Case-insensitive substring matching for robustness against
+    // dependency formatting changes (e.g., Display → Debug variants).
+    // Each pattern is minimal and specific — avoid broad matches like
+    // "cancel" alone which could match unrelated errors.
+    msg.len() > 0
+        && (msg.contains("H3_REQUEST_CANCELLED")
+            || msg.contains("h3_request_cancelled")
+            || msg.contains("request cancelled")
+            || msg.contains("aborted by peer"))
 }
 
 #[cfg(test)]

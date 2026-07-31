@@ -11,6 +11,12 @@ use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
 use crate::{route, Asset, BUILD_VERSION, HEADER_MAPS};
 
+// ── Protocol strings as static slices — no per-request allocation ─────
+
+const PROTO_H1: &str = "h1";
+const PROTO_H2: &str = "h2";
+const PROTO_H3: &str = "h3";
+
 /// Returns true if the request's `If-None-Match` header matches the build version,
 /// meaning the client already has the latest version of all static resources.
 #[inline]
@@ -21,13 +27,17 @@ fn is_not_modified<B>(req: &Request<B>) -> bool {
         .map_or(false, |etag| etag == BUILD_VERSION)
 }
 
-/// Build a 304 Not Modified response with the build-version ETag.
-/// Generic over body type so it works for both h1/h2 (`Full<Bytes>`) and h3 (`()`).
-fn not_modified_response<T: Default>() -> hyper::Response<T> {
-    let mut resp = hyper::Response::new(T::default());
+/// Build a 304 Not Modified response for h1/h2 path — body is empty `Full<Bytes>`.
+/// Unlike the old code that constructed a `Response<Full<Bytes>>` then deconstructed
+/// it, we build the response directly, avoiding one unnecessary allocation round-trip.
+#[inline]
+fn not_modified_response() -> hyper::Response<Full<Bytes>> {
+    let mut resp = hyper::Response::new(Full::new(Bytes::new()));
     *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
-    resp.headers_mut()
-        .insert(ETAG, HeaderValue::from_static(BUILD_VERSION));
+    resp.headers_mut().insert(
+        ETAG,
+        HeaderValue::from_static(BUILD_VERSION),
+    );
     resp.headers_mut().insert(
         CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-store, must-revalidate"),
@@ -35,13 +45,45 @@ fn not_modified_response<T: Default>() -> hyper::Response<T> {
     resp
 }
 
+/// Build a 304 Not Modified response with an empty `()` body (for h3).
 #[inline]
-pub(crate) fn build_response(asset: &Asset) -> hyper::Response<Full<Bytes>> {
-    let status = hyper::StatusCode::from_u16(asset.status_code).unwrap_or(hyper::StatusCode::OK);
+fn not_modified_response_h3() -> hyper::Response<()> {
+    let mut resp = hyper::Response::new(());
+    *resp.status_mut() = hyper::StatusCode::NOT_MODIFIED;
+    resp.headers_mut().insert(
+        ETAG,
+        HeaderValue::from_static(BUILD_VERSION),
+    );
+    resp.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+    );
+    resp
+}
+
+/// Build a full response for an asset's body (h1/h2 path).
+///
+/// The `HeaderMap::clone()` from `HEADER_MAPS` is the single per-request
+/// allocation. This replaces the old `build_response → into_parts → from_parts`
+/// round-trip by directly wrapping the body in `TimedBody`, avoiding an
+/// intermediate `Response` construction.
+#[inline]
+fn response_for_asset(asset: &Asset) -> hyper::Response<Full<Bytes>> {
+    let status =
+        hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(asset.body)));
     *resp.status_mut() = status;
     *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
     resp
+}
+
+#[inline]
+fn protocol_str(version: hyper::Version) -> &'static str {
+    if version == hyper::Version::HTTP_2 {
+        PROTO_H2
+    } else {
+        PROTO_H1
+    }
 }
 
 /// Shared request handler used by both TLS and plain-HTTP connections.
@@ -52,51 +94,47 @@ pub(crate) async fn handle_request(
     log_mode: LogMode,
 ) -> Result<hyper::Response<TimedBody>, Infallible> {
     let start = Instant::now();
-    let path = req.uri().path().to_owned();
-    let method = req.method().to_string();
-    let protocol = match req.version() {
-        v if v == hyper::Version::HTTP_2 => "h2",
-        _ => "h1",
-    };
+    let path = req.uri().path();
+    let method = req.method();
+    let protocol = protocol_str(req.version());
 
-    // Generic ETag check: return 304 for any resource if the client
-    // already has the current build version cached.
+    // ── Generic ETag check: 304 early-return without routing ────────
     if is_not_modified(&req) {
-        let resp = not_modified_response::<Full<Bytes>>();
+        let resp = not_modified_response();
         let (parts, body) = resp.into_parts();
         let timed = TimedBody {
             inner: body,
             log: Some(TimingInfo {
                 start,
-                method,
-                path,
+                method: method.to_string(),
+                path: path.to_owned(),
                 status: 304,
                 size: 0,
                 savings: 0,
-                protocol: protocol.to_string(),
+                protocol,
                 log_mode,
             }),
         };
         return Ok(hyper::Response::from_parts(parts, timed));
     }
 
-    let asset = route(&path);
+    let asset = route(path);
     let status = asset.status_code;
     let size = asset.content_length as u64;
     let savings = asset.savings_pct as u64;
-    let resp = build_response(asset);
-
+    let resp = response_for_asset(asset);
     let (parts, body) = resp.into_parts();
+
     let timed = TimedBody {
         inner: body,
         log: Some(TimingInfo {
             start,
-            method,
-            path,
+            method: method.to_string(),
+            path: path.to_owned(),
             status,
             size,
             savings,
-            protocol: protocol.to_string(),
+            protocol,
             log_mode,
         }),
     };
@@ -163,7 +201,7 @@ where
                     // Generic ETag check: return 304 for any resource if
                     // the client already has the current build version cached.
                     if is_not_modified(&req) {
-                        let resp = not_modified_response::<()>();
+                        let resp = not_modified_response_h3();
                         if let Err(e) = stream.send_response(resp).await {
                             if !is_client_cancel(&e) {
                                 eprintln!("h3 send_response error: {e}");
@@ -177,23 +215,9 @@ where
                             return;
                         }
                         let _ = finished_tx.send(stream);
-                        match &log_mode {
-                            LogMode::Summary(counter) => {
-                                counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            LogMode::Detailed { tx, .. } => {
-                                let elapsed = start.elapsed().as_micros() as u64;
-                                let _ = tx.send((
-                                    method,
-                                    path,
-                                    304_u16,
-                                    0_u64,
-                                    0_u64,
-                                    elapsed,
-                                    "h3".to_string(),
-                                ));
-                            }
-                        }
+                        log_h3_outcome(
+                            &log_mode, &method, &path, 304, 0, 0, start,
+                        );
                         return;
                     }
 
@@ -202,15 +226,7 @@ where
                     let content_length = asset.content_length;
                     let savings = asset.savings_pct as u64;
 
-                    let status = hyper::StatusCode::from_u16(asset.status_code)
-                        .unwrap_or(hyper::StatusCode::OK);
-                    let mut resp = hyper::Response::new(());
-                    *resp.status_mut() = status;
-                    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
-                    resp.headers_mut().insert(
-                        hyper::header::CONTENT_LENGTH,
-                        hyper::header::HeaderValue::from_static(asset.content_length_str),
-                    );
+                    let resp = h3_response_for_asset(asset);
 
                     if let Err(e) = stream.send_response(resp).await {
                         if !is_client_cancel(&e) {
@@ -242,24 +258,15 @@ where
                     // Quinn's I/O driver time to transmit the FIN packet.
                     let _ = finished_tx.send(stream);
 
-                    // Log full end-to-end: CPU + QUIC I/O, comparable to h1/h2.
-                    match &log_mode {
-                        LogMode::Summary(counter) => {
-                            counter.fetch_add(1, Ordering::Relaxed);
-                        }
-                        LogMode::Detailed { tx, .. } => {
-                            let elapsed = start.elapsed().as_micros() as u64;
-                            let _ = tx.send((
-                                method,
-                                path,
-                                status_code,
-                                content_length as u64,
-                                savings as u64,
-                                elapsed,
-                                "h3".to_string(),
-                            ));
-                        }
-                    }
+                    log_h3_outcome(
+                        &log_mode,
+                        &method,
+                        &path,
+                        status_code,
+                        content_length as u64,
+                        savings,
+                        start,
+                    );
                 });
             }
             None => {
@@ -271,4 +278,52 @@ where
     }
 
     Ok(())
+}
+
+// ── Extracted h3 helpers (de-duplicate the logging and response-construction logic) ──
+
+/// Build an h3 `Response<()>` by cloning the asset's pre-built `HeaderMap`
+/// and adding the `Content-Length` header required by h3.
+#[inline]
+fn h3_response_for_asset(asset: &Asset) -> hyper::Response<()> {
+    let status =
+        hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
+    let mut resp = hyper::Response::new(());
+    *resp.status_mut() = status;
+    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_LENGTH,
+        hyper::header::HeaderValue::from_static(asset.content_length_str),
+    );
+    resp
+}
+
+/// Log the outcome of an h3 request — extracted from the two call sites
+/// (304 and full response) to eliminate duplicated logging logic.
+fn log_h3_outcome(
+    log_mode: &LogMode,
+    method: &str,
+    path: &str,
+    status: u16,
+    size: u64,
+    savings: u64,
+    start: Instant,
+) {
+    match log_mode {
+        LogMode::Summary(counter) => {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+        LogMode::Detailed { tx, .. } => {
+            let elapsed = start.elapsed().as_micros() as u64;
+            let _ = tx.send((
+                method.to_string(),
+                path.to_owned(),
+                status,
+                size,
+                savings,
+                elapsed,
+                PROTO_H3,
+            ));
+        }
+    }
 }

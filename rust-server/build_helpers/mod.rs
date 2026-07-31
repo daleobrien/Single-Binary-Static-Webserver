@@ -50,10 +50,16 @@ pub fn run() {
     // ── Pre-build the version-check script and its CSP hash ──
     let (version_script_tag, csp_script_hash) = build_version_script(&build_version);
 
+    // ── Read DISABLE_SRI env var ──
+    let disable_sri: bool = std::env::var("DISABLE_SRI")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
     // ── Two-pass file processing ──
     let mut uncompressed_lens: HashMap<String, usize> = HashMap::new();
     let (mut file_hashes, hashed_filenames) =
-        minify_compute_sha_and_compress(&files, &gzip_dir, &mut uncompressed_lens);
+        minify_compute_sha_and_compress(&files, &gzip_dir, &mut uncompressed_lens, disable_sri);
     update_html_sri_and_inject_update_js(
         &files,
         &mut file_hashes,
@@ -61,6 +67,7 @@ pub fn run() {
         &version_script_tag,
         &gzip_dir,
         &mut uncompressed_lens,
+        disable_sri,
     );
 
     // ── Security headers (CSP is built per-file in build_asset_metadata) ──
@@ -68,7 +75,7 @@ pub fn run() {
 
     // ── Pre-compute CSP directive values for reuse across both regular
     //     asset metadata and the 404 fallback header set. ──
-    let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash);
+    let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash, disable_sri);
 
     // ── Configurable 404 filename (env var with default) ──
     let not_found_filename =

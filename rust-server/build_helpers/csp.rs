@@ -19,7 +19,21 @@ pub(super) struct CspValues {
 pub(super) fn build_csp_values(
     file_hashes: &HashMap<String, String>,
     csp_script_hash: &str,
+    disable_sri: bool,
 ) -> CspValues {
+    if disable_sri {
+        // When SRI is disabled, omit all sha256 hashes from CSP.
+        // The version-check script hash is also omitted since it's injected inline.
+        return CspValues {
+            script_src: "'self' 'unsafe-inline'".to_string(),
+            style_src: "'self' 'unsafe-inline'".to_string(),
+            img_src: "'self'".to_string(),
+            font_src: "'self'".to_string(),
+            media_src: "'self'".to_string(),
+            frame_src: "'self'".to_string(),
+        };
+    }
+
     let js_hashes = collect_hashes(file_hashes, &[".js"]);
     let css_hashes = collect_hashes(file_hashes, &[".css"]);
     let img_hashes = collect_hashes(
@@ -221,7 +235,7 @@ mod tests {
     #[test]
     fn csp_values_no_hashes() {
         let map = HashMap::new();
-        let v = build_csp_values(&map, "scripthash");
+        let v = build_csp_values(&map, "scripthash", false);
         assert_eq!(v.script_src, "'sha256-scripthash'");
         assert_eq!(v.style_src, "'self'");
         assert_eq!(v.img_src, "'self'");
@@ -237,7 +251,7 @@ mod tests {
             ("lib.js".into(), "js456".into()),
             ("main.css".into(), "css789".into()),
         ]);
-        let v = build_csp_values(&map, "scripthash");
+        let v = build_csp_values(&map, "scripthash", false);
         assert!(v.script_src.contains("'sha256-scripthash'"));
         assert!(v.script_src.contains("'sha256-js123'"));
         assert!(v.script_src.contains("'sha256-js456'"));
@@ -256,7 +270,7 @@ mod tests {
             ("roboto.woff2".into(), "fnt1".into()),
             ("fallback.ttf".into(), "fnt2".into()),
         ]);
-        let v = build_csp_values(&map, "scripthash");
+        let v = build_csp_values(&map, "scripthash", false);
         assert_eq!(v.script_src, "'sha256-scripthash'");
         assert_eq!(v.style_src, "'self'");
         assert!(v.img_src.contains("'sha256-img1'"));
@@ -264,6 +278,24 @@ mod tests {
         assert!(v.font_src.contains("'sha256-fnt1'"));
         assert!(v.font_src.contains("'sha256-fnt2'"));
         assert_eq!(v.media_src, "'self'");
+    }
+
+    #[test]
+    fn csp_values_disabled_sri() {
+        let map = HashMap::from([
+            ("app.js".into(), "js123".into()),
+            ("main.css".into(), "css789".into()),
+            ("logo.png".into(), "img1".into()),
+        ]);
+        let v = build_csp_values(&map, "scripthash", true);
+        // When SRI is disabled, CSP uses 'self' and 'unsafe-inline' for scripts/styles
+        // to allow the inline version-check script and any inline styles.
+        assert_eq!(v.script_src, "'self' 'unsafe-inline'");
+        assert_eq!(v.style_src, "'self' 'unsafe-inline'");
+        assert_eq!(v.img_src, "'self'");
+        assert_eq!(v.font_src, "'self'");
+        assert_eq!(v.media_src, "'self'");
+        assert_eq!(v.frame_src, "'self'");
     }
 
     // ── build_csp_for_source ────────────────────────────────────────

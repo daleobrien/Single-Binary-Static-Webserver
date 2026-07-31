@@ -14,6 +14,7 @@ pub(super) fn update_html_sri_and_inject_update_js(
     version_script_tag: &str,
     gzip_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
+    disable_sri: bool,
 ) {
     for file in files {
         if Path::new(file).extension().and_then(|e| e.to_str()) != Some("html") {
@@ -35,16 +36,19 @@ pub(super) fn update_html_sri_and_inject_update_js(
         // inject integrity="sha256-…" crossorigin="anonymous" on <link>/<script>/<img> tags.
         // Try both href (for <link>) and src (for <script>/<img>) — only the one
         // present in the HTML will match.
-        for (asset_file, hash) in file_hashes.iter() {
-            let hashed_name = hashed_filenames
-                .get(asset_file)
-                .map(|s| s.as_str())
-                .unwrap_or(asset_file);
-            for attr in &["href", "src"] {
-                let pattern = format!("{attr}=\"/{asset_file}\"");
-                let replacement =
-                    format!("{attr}=\"/{hashed_name}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"");
-                raw_str = raw_str.replace(&pattern, &replacement);
+        // When SRI is disabled, skip this step entirely — original filenames are used as-is.
+        if !disable_sri {
+            for (asset_file, hash) in file_hashes.iter() {
+                let hashed_name = hashed_filenames
+                    .get(asset_file)
+                    .map(|s| s.as_str())
+                    .unwrap_or(asset_file);
+                for attr in &["href", "src"] {
+                    let pattern = format!("{attr}=\"/{asset_file}\"");
+                    let replacement =
+                        format!("{attr}=\"/{hashed_name}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"");
+                    raw_str = raw_str.replace(&pattern, &replacement);
+                }
             }
         }
 

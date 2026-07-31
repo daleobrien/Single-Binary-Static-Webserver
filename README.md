@@ -87,6 +87,7 @@ WORKERS = "4"
 MAX_CONNS = "2048"
 SHUTDOWN_TIMEOUT_SECS = "60"
 NOT_FOUND_FILENAME = "not-found.html"
+DISABLE_SRI = "true"
 ```
 
 | Variable | Default | Description |
@@ -97,6 +98,7 @@ NOT_FOUND_FILENAME = "not-found.html"
 | `MAX_CONNS` | `1024` | Maximum concurrent TCP connections (enforced via a shared semaphore) |
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 | `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page |
+| `DISABLE_SRI` | `false` | Set to `1` or `true` to disable Subresource Integrity (content-hashed filenames, `integrity` attributes in HTML, and CSP hash allowlisting). When disabled, CSP uses `'self' 'unsafe-inline'` for scripts and styles to allow the inline version-check script. |
 
 ## Build & Run
 

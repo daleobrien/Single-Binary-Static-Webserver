@@ -89,4 +89,23 @@ pub fn generate(out_dir: &str) {
         "pub(crate) const SHUTDOWN_TIMEOUT_SECS: u64 = {shutdown_timeout};"
     )
     .unwrap();
+    writeln!(f).unwrap();
+
+    let disable_sri: bool = env::var("DISABLE_SRI")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    writeln!(
+        f,
+        "/// Disable Subresource Integrity (SRI) — set via DISABLE_SRI at build time (default: false)."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// When true, content-hashed filenames, integrity attributes, and CSP hashes are omitted."
+    )
+    .unwrap();
+    writeln!(f, "#[allow(dead_code)]").unwrap();
+    writeln!(f, "pub(crate) const DISABLE_SRI: bool = {disable_sri};").unwrap();
 }

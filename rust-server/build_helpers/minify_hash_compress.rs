@@ -11,6 +11,7 @@ pub(super) fn minify_compute_sha_and_compress(
     files: &[String],
     gzip_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
+    disable_sri: bool,
 ) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut file_hashes: HashMap<String, String> = HashMap::new();
     let mut hashed_filenames: HashMap<String, String> = HashMap::new();
@@ -30,9 +31,14 @@ pub(super) fn minify_compute_sha_and_compress(
         // Compute SHA-256 of the (uncompressed) body for the Digest header.
         file_hashes.insert(file.clone(), utils::sha256_base64(&minified));
 
-        // Compute hex SHA-256 for content-hashed filename (e.g. script.a8f2c3d.js).
-        let hex_hash = utils::sha256_hex(&minified);
-        hashed_filenames.insert(file.clone(), utils::hashed_filename(file, &hex_hash));
+        // Compute hex SHA-256 for content-hashed filename (e.g. script.a8f2c3d.js),
+        // but only when SRI is enabled. When disabled, the original filename is used.
+        if disable_sri {
+            hashed_filenames.insert(file.clone(), file.clone());
+        } else {
+            let hex_hash = utils::sha256_hex(&minified);
+            hashed_filenames.insert(file.clone(), utils::hashed_filename(file, &hex_hash));
+        }
 
         // Track uncompressed length for later size comparison.
         uncompressed_lens.insert(file.clone(), minified.len());

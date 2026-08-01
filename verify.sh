@@ -152,7 +152,7 @@ run_stress_tests() {
 QUICK=false
 TEST_ONLY=false
 LOAD_ONLY=false
-LOAD_REQUESTS="${LOAD_REQUESTS:-200}"
+LOAD_REQUESTS="${LOAD_REQUESTS:-10000}"
 for arg in "$@"; do
     case "$arg" in
         --quick)      QUICK=true ;;
@@ -195,155 +195,167 @@ run_protocol_comparison() {
     N="$LOAD_REQUESTS"
     URL="https://localhost:$PORT/"
 
-    # Temp files for per-request timings
-    TMPDIR=$(mktemp -d)
-    trap "rm -rf $TMPDIR" RETURN
+    # Locate brew's curl (has HTTP/3 support; fall back to system curl)
+    BREW_CURL="curl"
+    for candidate in "/opt/homebrew/opt/curl/bin/curl" "/usr/local/opt/curl/bin/curl"; do
+        if [ -x "$candidate" ]; then BREW_CURL="$candidate"; break; fi
+    done
 
-    # ── Warm-up ─────────────────────────────────────────────────────────
+    # ── Protocol verification (single request per protocol) ────────────
+    echo ""
+    info "Protocol verification (via $BREW_CURL):"
+
+    H1_VER=$("$BREW_CURL" -sk --http1.1 -o /dev/null -w "%{http_version}" "$URL" 2>/dev/null || echo "0")
+    if [ "$H1_VER" != "0" ]; then
+        ok "HTTP/1.1 → v$H1_VER"
+        H1_OK=true
+    else
+        warn "HTTP/1.1 not available"
+        H1_OK=false
+    fi
+
+    H2_VER=$("$BREW_CURL" -sk --http2 -o /dev/null -w "%{http_version}" "$URL" 2>/dev/null || echo "0")
+    if [ "$H2_VER" != "0" ]; then
+        ok "HTTP/2   → v$H2_VER"
+        H2_OK=true
+    else
+        warn "HTTP/2 not available"
+        H2_OK=false
+    fi
+
+    H3_VER=$("$BREW_CURL" -sk --http3 -o /dev/null -w "%{http_version}" "$URL" 2>/dev/null || echo "0")
+    if [ "$H3_VER" != "0" ]; then
+        ok "HTTP/3   → v$H3_VER"
+        H3_OK=true
+    else
+        warn "HTTP/3 not available (need brew curl with HTTP/3 support)"
+        H3_OK=false
+    fi
+
+    # ── Warm-up ───────────────────────────────────────────────────────
     info "Warming up..."
-    for _ in $(seq 1 5); do
+    for _ in $(seq 1 10); do
         curl -sk -o /dev/null "$URL" 2>/dev/null || true
     done
 
-    # ── curl format: output http_version and time_total per request ─────
-    CURL_FMT="%{http_version} %{time_total}\n"
-
-    # ── Helper: run N requests with given curl flags, record times ──────
-    # IMPORTANT: this function is called in a $(...) command substitution.
-    # Only the final stats line must go to stdout; all diagnostics go to stderr.
-    run_curl_bench() {
-        local label="$1"
-        local extra_flags="$2"
-        local out_file="$3"
-        local count=0
-
-        echo -e "       Testing $label: $N requests..." >&2
-        for _ in $(seq 1 "$N"); do
-            local line
-            line=$(curl -sk $extra_flags -o /dev/null -w "$CURL_FMT" "$URL" 2>/dev/null) || true
-            if [ -n "$line" ]; then
-                local ver="${line%% *}"
-                local t="${line##* }"
-                echo "$ver $t" >> "$out_file"
-                count=$((count + 1))
-            fi
-        done
-
-        if [ "$count" -eq 0 ]; then
-            echo "0 0 0 0 0"
-            return
-        fi
-
-        # Calculate stats with awk (one line to stdout, newline-terminated)
-        awk '
-        {
-            total += $2
-            count++
-            if (NR == 1 || $2 < min) min = $2
-            if (NR == 1 || $2 > max) max = $2
+    # ── Helper: parse h2load latency + throughput output ───────────────
+    # h2load latency columns:  min  max  median  p95  p99  mean  sd  +/-sd
+    #   request     :          $3   $4   $5      $6   $7   $8    $9  $10
+    # Aggregate throughput comes from the "finished in" line:
+    #   finished in X.XX<unit>, YY req/s, ZZ bytes/s  → total=$3, rps=$4
+    parse_h2load() {
+        echo "$1" | awk '
+        /^finished in/ {
+            val = $3; gsub(/,/, "", val)
+            if (val ~ /us$/)      { gsub(/us$/, "", val); total = val / 1000000 }
+            else if (val ~ /ms$/) { gsub(/ms$/, "", val); total = val / 1000 }
+            else if (val ~ /s$/)  { gsub(/s$/, "", val);  total = val }
+            rps = $4 + 0   # aggregate req/s (not per-connection)
+        }
+        /^request[[:space:]]+:/ && !/req\// {
+            lat_min = conv_ms($3)
+            lat_max = conv_ms($4)
+            lat_avg = conv_ms($8)
         }
         END {
-            if (count > 0) {
-                avg = total / count
-                printf "%d %.3f %.3f %.3f %.3f\n", count, total, avg * 1000, min * 1000, max * 1000
-            } else {
-                printf "0 0 0 0 0\n"
-            }
-        }' "$out_file"
+            printf "%.1f|%.1f|%.1f|%.1f|%.3f\n", \
+                lat_min + 0, lat_max + 0, lat_avg + 0, rps + 0, total + 0
+        }
+        function conv_ms(v) {
+            if (v == "") return 0
+            if (v ~ /us$/) { gsub(/us$/, "", v); return v / 1000 }
+            if (v ~ /ms$/) { gsub(/ms$/, "", v); return v }
+            if (v ~ /s$/)  { gsub(/s$/, "", v);  return v * 1000 }
+            return v + 0
+        }'
     }
 
-    # ── Run benchmarks ──────────────────────────────────────────────────
+    # ── HTTP/1.1 benchmark (h2load --h1, 50 concurrent connections) ────
     echo ""
-    H1_STATS=$(run_curl_bench "HTTP/1.1" "--http1.1" "$TMPDIR/h1.txt")
-    echo ""
-    H2_STATS=$(run_curl_bench "HTTP/2"   "--http2"   "$TMPDIR/h2.txt")
-    echo ""
+    if $H1_OK && command -v h2load &>/dev/null; then
+        info "Benchmarking HTTP/1.1: $N requests via h2load (50 clients)..."
+        H1_OUT=$(h2load -n "$N" -c 50 -m 1 --h1 "$URL" 2>&1) || true
+        IFS='|' read -r h1_min h1_max h1_avg h1_rps h1_total <<< "$(parse_h2load "$H1_OUT")"
+        ok "HTTP/1.1  avg=${h1_avg}ms  rps=${h1_rps}  total=${h1_total}s"
+    else
+        h1_min=0; h1_max=0; h1_avg=0; h1_rps=0; h1_total=0
+    fi
 
-    # HTTP/3: try curl --http3 first, fall back to quiche-client
-    H3_STATS="0 0 0 0 0"
-    H3_OK=false
-    if curl --http3 -sk -o /dev/null "$URL" 2>/dev/null; then
-        H3_STATS=$(run_curl_bench "HTTP/3" "--http3" "$TMPDIR/h3.txt")
-        H3_OK=true
-    elif command -v quiche-client &>/dev/null; then
-        echo -e "       Testing HTTP/3: $N requests via quiche-client..." >&2
-        for _ in $(seq 1 "$N"); do
-            local start_ns end_ns
-            start_ns=$(date +%s%N)
-            quiche-client --no-verify "$URL" > /dev/null 2>&1 || true
-            end_ns=$(date +%s%N)
-            local elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
-            echo "3 $elapsed_ms" >> "$TMPDIR/h3.txt"
-        done
+    # ── HTTP/2 benchmark (h2load, 10 clients × 10 streams each) ────────
+    echo ""
+    if $H2_OK && command -v h2load &>/dev/null; then
+        info "Benchmarking HTTP/2: $N requests via h2load (10 clients × 10 streams)..."
+        H2_OUT=$(h2load -n "$N" -c 10 -m 10 "$URL" 2>&1) || true
+        IFS='|' read -r h2_min h2_max h2_avg h2_rps h2_total <<< "$(parse_h2load "$H2_OUT")"
+        ok "HTTP/2    avg=${h2_avg}ms  rps=${h2_rps}  total=${h2_total}s"
+    else
+        h2_min=0; h2_max=0; h2_avg=0; h2_rps=0; h2_total=0
+    fi
+
+    # ── HTTP/3 benchmark (parallel curl --http3, 10-way concurrency) ───
+    echo ""
+    if $H3_OK; then
+        info "Benchmarking HTTP/3: $N requests via parallel curl (10 concurrent)..."
+        TMPDIR=$(mktemp -d)
+
+        # Warm up QUIC connection
+        "$BREW_CURL" -sk --http3 -o /dev/null "$URL" 2>/dev/null || true
+        sleep 1
+
+        # Run N requests with xargs -P for 10-way parallelism
+        seq 1 "$N" | xargs -P 10 -I {} "$BREW_CURL" -sk --http3 -o /dev/null -w "%{time_total}\n" "$URL" >> "$TMPDIR/h3.txt" 2>/dev/null
+
         H3_STATS=$(awk '
         {
-            total += $2
+            total += $1
             count++
-            if (NR == 1 || $2 < min) min = $2
-            if (NR == 1 || $2 > max) max = $2
+            if (NR == 1 || $1 < min) min = $1
+            if (NR == 1 || $1 > max) max = $1
         }
         END {
             if (count > 0) {
-                avg = total / count
-                printf "%d %.3f %.3f %.3f %.3f\n", count, (total / 1000), avg, min, max
+                avg_ms = (total / count) * 1000
+                min_ms = min * 1000
+                max_ms = max * 1000
+                rps    = count / total
+                printf "%.1f|%.1f|%.1f|%.1f|%.3f\n", min_ms, max_ms, avg_ms, rps, total
             } else {
-                printf "0 0 0 0 0\n"
+                printf "0|0|0|0|0\n"
             }
         }' "$TMPDIR/h3.txt")
-        H3_OK=true
+        IFS='|' read -r h3_min h3_max h3_avg h3_rps h3_total <<< "$H3_STATS"
+
+        rm -rf "$TMPDIR"
+        ok "HTTP/3    avg=${h3_avg}ms  rps=${h3_rps}  total=${h3_total}s"
     else
-        warn "Neither curl --http3 nor quiche-client available — skipping HTTP/3"
+        h3_min=0; h3_max=0; h3_avg=0; h3_rps=0; h3_total=0
     fi
+
     echo ""
 
-    # ── Parse stats ─────────────────────────────────────────────────────
-    parse_stats() {
-        echo "$1" | awk '{printf "%d|%.3f|%.1f|%.1f|%.1f\n", $1, $2, $3, $4, $5}'
-    }
-
-    IFS='|' read -r h1_n h1_total h1_avg h1_min h1_max <<< "$(parse_stats "$H1_STATS")"
-    IFS='|' read -r h2_n h2_total h2_avg h2_min h2_max <<< "$(parse_stats "$H2_STATS")"
-    IFS='|' read -r h3_n h3_total h3_avg h3_min h3_max <<< "$(parse_stats "$H3_STATS")"
-
-    # Calculate req/sec (guard against division by zero)
-    h1_rps=$(echo "scale=1; if ($h1_total > 0) $h1_n / $h1_total else 0" | bc 2>/dev/null || echo "N/A")
-    h2_rps=$(echo "scale=1; if ($h2_total > 0) $h2_n / $h2_total else 0" | bc 2>/dev/null || echo "N/A")
-    h3_rps=$(echo "scale=1; if ($h3_total > 0) $h3_n / $h3_total else 0" | bc 2>/dev/null || echo "N/A")
-
-    # ── Comparison table ────────────────────────────────────────────────
-    echo ""
-    echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║              HTTP Protocol Comparison — $N requests each               ║${NC}"
-    echo -e "${BOLD}╠═══════╦══════════╦═══════════╦═══════════╦═══════════╦══════════════════╣${NC}"
-    echo -e "${BOLD}║ Proto ║ Requests ║  Total(s) ║  Avg(ms)  ║  Min(ms)  ║  Max(ms)  ║  Req/sec  ║${NC}"
+    # ── Comparison table ──────────────────────────────────────────────
+    echo -e "${BOLD}╔═════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║                HTTP Protocol Comparison — $N requests each                 ║${NC}"
+    echo -e "${BOLD}╠═══════╦══════════╦═══════════╦═══════════╦═══════════╦═══════════╦══════════╣${NC}"
+    echo -e "${BOLD}║ Proto ║ Requests ║  Total(s) ║  Avg(ms)  ║  Min(ms)  ║  Max(ms)  ║ Req/sec  ║${NC}"
     echo -e "${BOLD}╠═══════╬══════════╬═══════════╬═══════════╬═══════════╬═══════════╬══════════╣${NC}"
-    printf "${CYAN}║ h1.1  ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$h1_n" "$h1_total" "$h1_avg" "$h1_min" "$h1_max" "$h1_rps"
-    printf "${CYAN}║ h2    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$h2_n" "$h2_total" "$h2_avg" "$h2_min" "$h2_max" "$h2_rps"
+    if $H1_OK; then
+        printf "${CYAN}║ h1.1  ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$N" "$h1_total" "$h1_avg" "$h1_min" "$h1_max" "$h1_rps"
+    else
+        echo -e "${YELLOW}║ h1.1  ║    —     ║     —     ║     —     ║     —     ║     —     ║    —     ║${NC}"
+    fi
+    if $H2_OK; then
+        printf "${CYAN}║ h2    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$N" "$h2_total" "$h2_avg" "$h2_min" "$h2_max" "$h2_rps"
+    else
+        echo -e "${YELLOW}║ h2    ║    —     ║     —     ║     —     ║     —     ║     —     ║    —     ║${NC}"
+    fi
     if $H3_OK; then
-        printf "${CYAN}║ h3    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$h3_n" "$h3_total" "$h3_avg" "$h3_min" "$h3_max" "$h3_rps"
+        printf "${CYAN}║ h3    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$N" "$h3_total" "$h3_avg" "$h3_min" "$h3_max" "$h3_rps"
     else
         echo -e "${YELLOW}║ h3    ║    —     ║     —     ║     —     ║     —     ║     —     ║    —     ║${NC}"
     fi
     echo -e "${BOLD}╚═══════╩══════════╩═══════════╩═══════════╩═══════════╩═══════════╩══════════╝${NC}"
     echo ""
-
-    # ── Protocol verification: check that curl actually used the right version ──
-    info "Protocol version verification (first 3 responses):"
-    if [ -f "$TMPDIR/h1.txt" ]; then
-        echo -n "  HTTP/1.1 → "
-        head -3 "$TMPDIR/h1.txt" | awk '{printf "v%s ", $1}'
-        echo ""
-    fi
-    if [ -f "$TMPDIR/h2.txt" ]; then
-        echo -n "  HTTP/2   → "
-        head -3 "$TMPDIR/h2.txt" | awk '{printf "v%s ", $1}'
-        echo ""
-    fi
-    if [ -f "$TMPDIR/h3.txt" ] && $H3_OK; then
-        echo -n "  HTTP/3   → "
-        head -3 "$TMPDIR/h3.txt" | awk '{printf "v%s ", $1}'
-        echo ""
-    fi
 
     # ── Stop server ────────────────────────────────────────────────────
     kill "$SERVER_PID" 2>/dev/null || true

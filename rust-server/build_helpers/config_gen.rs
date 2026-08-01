@@ -29,6 +29,11 @@ pub fn generate(out_dir: &str) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(4096);
 
+    let tcp_handlers_per_worker: usize = env::var("TCP_HANDLERS_PER_WORKER")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| (max_connections / num_workers).max(64));
+
     let shutdown_timeout: u64 = env::var("SHUTDOWN_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -74,6 +79,23 @@ pub fn generate(out_dir: &str) {
     writeln!(
         f,
         "pub(crate) const MAX_CONNECTIONS: usize = {max_connections};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
+    writeln!(
+        f,
+        "/// Number of TCP connection-handler tasks per worker — set via TCP_HANDLERS_PER_WORKER",
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// at build time (default: max(MAX_CONNECTIONS / NUM_WORKERS, 64))."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "pub(crate) const TCP_HANDLERS_PER_WORKER: usize = {tcp_handlers_per_worker};"
     )
     .unwrap();
     writeln!(f).unwrap();

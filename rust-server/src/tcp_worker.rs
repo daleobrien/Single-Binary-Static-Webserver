@@ -7,9 +7,12 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, OwnedSemaphorePermit};
 use tokio_rustls::TlsAcceptor;
 
-use crate::config::{MAX_CONNECTIONS, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig};
+use crate::config::{
+    MAX_CONNECTIONS, TCP_HANDLERS_PER_WORKER, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig,
+};
 use crate::handlers::handle_request;
 use crate::logging::LogMode;
 use crate::sockets::create_reuseport_listener;
@@ -73,9 +76,14 @@ async fn handle_tcp_connection(
 }
 
 /// Spawn `num_workers` TCP listener tasks, each on its own SO_REUSEPORT
-/// socket. Incoming connections are limited by a shared semaphore to
-/// prevent unbounded resource usage under load. Returns handles that can
-/// be awaited for graceful shutdown.
+/// socket. Instead of spawning a new Tokio task per accepted connection
+/// (which adds scheduler overhead at very high connection rates), each
+/// worker maintains a fixed-size pool of handler tasks. Accepted
+/// connections are distributed to handlers via round-robin over
+/// unbounded mpsc channels. The global connection semaphore still
+/// provides backpressure.
+///
+/// Returns handles that can be awaited for graceful shutdown.
 pub(crate) fn spawn_tcp_workers(
     cfg: WorkerConfig,
 ) -> Result<
@@ -90,10 +98,18 @@ pub(crate) fn spawn_tcp_workers(
         shutdown_rx,
     } = cfg;
 
-    let mut handles = Vec::with_capacity(num_workers);
-
     let tls_acceptor = TlsAcceptor::from(Arc::clone(&tls_config));
     let conn_semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+
+    // Each worker gets a fixed pool of handler tasks. This eliminates the
+    // per-connection `tokio::task::spawn` overhead while still processing
+    // multiple connections concurrently within each worker.
+    let handlers_per_worker = TCP_HANDLERS_PER_WORKER;
+
+    // Pre-allocate handles; each worker contributes 1 accept task +
+    // `handlers_per_worker` handler tasks.
+    let total_tasks = num_workers * (1 + handlers_per_worker);
+    let mut handles = Vec::with_capacity(total_tasks);
 
     for i in 0..num_workers {
         let listener = create_reuseport_listener(port)?;
@@ -102,7 +118,32 @@ pub(crate) fn spawn_tcp_workers(
         let mut shutdown_rx = shutdown_rx.clone();
         let conn_semaphore = Arc::clone(&conn_semaphore);
 
+        // ── Handler task pool ──────────────────────────────────────
+        // Each handler gets its own mpsc channel so the accept loop can
+        // round-robin connections without contention.
+        let mut senders: Vec<mpsc::UnboundedSender<(TcpStream, std::net::SocketAddr, OwnedSemaphorePermit)>> =
+            Vec::with_capacity(handlers_per_worker);
+
+        for _h in 0..handlers_per_worker {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            senders.push(tx);
+
+            let tls = tls_acceptor.clone();
+            let log = log_mode.clone();
+
+            let handle = tokio::spawn(async move {
+                while let Some((stream, addr, permit)) = rx.recv().await {
+                    let _permit = permit;
+                    handle_tcp_connection(stream, addr, tls.clone(), log.clone()).await;
+                }
+            });
+            handles.push(handle);
+        }
+
+        // ── Accept loop ────────────────────────────────────────────
         let handle = tokio::spawn(async move {
+            let mut next_handler: usize = 0;
+
             loop {
                 let (stream, addr) = tokio::select! {
                     result = listener.accept() => {
@@ -119,8 +160,9 @@ pub(crate) fn spawn_tcp_workers(
                     }
                 };
 
-                // Acquire a connection permit before spawning; this provides
-                // backpressure when the concurrent-connection limit is reached.
+                // Acquire a connection permit before dispatching; this
+                // provides backpressure when the concurrent-connection
+                // limit is reached.
                 let permit = tokio::select! {
                     permit = conn_semaphore.clone().acquire_owned() => {
                         match permit {
@@ -133,13 +175,22 @@ pub(crate) fn spawn_tcp_workers(
                     }
                 };
 
-                let log_mode = log_mode.clone();
-                let tls_acceptor = tls_acceptor.clone();
-                tokio::task::spawn(async move {
-                    let _permit = permit;
-                    handle_tcp_connection(stream, addr, tls_acceptor, log_mode).await;
-                });
+                let idx = next_handler % handlers_per_worker;
+                next_handler = next_handler.wrapping_add(1);
+
+                // If a handler task has died (channel closed), stop.
+                if senders[idx]
+                    .send((stream, addr, permit))
+                    .is_err()
+                {
+                    elog!("TCP handler channel closed on worker {i} — stopping accept loop");
+                    break;
+                }
             }
+
+            // Drop all senders so the handler tasks see the channel as
+            // closed and exit their recv loops.
+            drop(senders);
         });
 
         handles.push(handle);

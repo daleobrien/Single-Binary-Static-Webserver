@@ -135,6 +135,78 @@ pub fn generate(out_dir: &str) {
     .unwrap();
     writeln!(f).unwrap();
 
+    let h2_conn_window: u32 = env::var("H2_CONN_WINDOW")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16 * 1024 * 1024);
+
+    let h2_stream_window: u32 = env::var("H2_STREAM_WINDOW")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4 * 1024 * 1024);
+
+    let h2_max_frame_size: u32 = env::var("H2_MAX_FRAME_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(65_535);
+
+    let h2_max_send_buf: usize = env::var("H2_MAX_SEND_BUF")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024 * 1024);
+
+    writeln!(
+        f,
+        "/// HTTP/2 connection-level flow-control window in bytes — set via H2_CONN_WINDOW"
+    )
+    .unwrap();
+    writeln!(f, "/// at build time (default: 16 MiB).").unwrap();
+    writeln!(
+        f,
+        "pub(crate) const H2_CONN_WINDOW: u32 = {h2_conn_window};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
+    writeln!(
+        f,
+        "/// HTTP/2 per-stream flow-control window in bytes — set via H2_STREAM_WINDOW"
+    )
+    .unwrap();
+    writeln!(f, "/// at build time (default: 4 MiB).").unwrap();
+    writeln!(
+        f,
+        "pub(crate) const H2_STREAM_WINDOW: u32 = {h2_stream_window};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
+    writeln!(
+        f,
+        "/// HTTP/2 max frame size — set via H2_MAX_FRAME_SIZE at build time"
+    )
+    .unwrap();
+    writeln!(f, "/// (default: 65535). Must be in range 16384..16777215.").unwrap();
+    writeln!(
+        f,
+        "pub(crate) const H2_MAX_FRAME_SIZE: u32 = {h2_max_frame_size};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
+    writeln!(
+        f,
+        "/// HTTP/2 max per-stream send buffer in bytes — set via H2_MAX_SEND_BUF"
+    )
+    .unwrap();
+    writeln!(f, "/// at build time (default: 1 MiB).").unwrap();
+    writeln!(
+        f,
+        "pub(crate) const H2_MAX_SEND_BUF: usize = {h2_max_send_buf};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
     let disable_sri: bool = env::var("DISABLE_SRI")
         .ok()
         .map(|s| s == "1" || s.to_lowercase() == "true")

@@ -146,6 +146,38 @@ fn write_tls_config(g: &mut fs::File) {
     )
     .unwrap();
     writeln!(g).unwrap();
+    writeln!(
+        g,
+        "    // Enable TLS 1.3 session resumption via stateless tickets."
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "    // Returning h2 clients skip the expensive certificate path and"
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "    // reconnect faster. The key is generated fresh at startup (a new"
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "    // process invalidates tickets from the previous run)."
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "    config.ticketer = rustls::crypto::ring::Ticketer::new()"
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "        .expect(\"failed to create TLS ticket encryptor\");"
+    )
+    .unwrap();
+    writeln!(g).unwrap();
+    writeln!(g).unwrap();
     writeln!(g, "    std::sync::Arc::new(config)").unwrap();
     writeln!(g, "}}").unwrap();
     writeln!(g).unwrap();

@@ -15,6 +15,10 @@ pub(crate) fn print_help() -> ! {
     elog!("  MAX_CONNS             Maximum concurrent TCP connections (default: 1024)");
     elog!("  TCP_HANDLERS_PER_WORKER Number of TCP handler tasks per worker (default: max(MAX_CONNS/WORKERS, 64))");
     elog!("  H3_HANDLERS_PER_CONNECTION Number of h3 handler tasks per connection (default: 8)");
+    elog!("  H2_CONN_WINDOW        HTTP/2 connection flow-control window in bytes (default: 16 MiB)");
+    elog!("  H2_STREAM_WINDOW      HTTP/2 per-stream flow-control window in bytes (default: 4 MiB)");
+    elog!("  H2_MAX_FRAME_SIZE     HTTP/2 max frame size in bytes (default: 65535)");
+    elog!("  H2_MAX_SEND_BUF       HTTP/2 per-stream send buffer in bytes (default: 1 MiB)");
     elog!("  SHUTDOWN_TIMEOUT_SECS Graceful shutdown timeout in seconds (default: 30)");
     elog!("  DISABLE_SRI           Disable Subresource Integrity hashing (default: false)");
     elog!("  DISABLE_LOGGING       Compile out all stderr output (default: true)");

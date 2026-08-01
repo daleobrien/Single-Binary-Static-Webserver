@@ -95,7 +95,13 @@ DISABLE_SRI = "true"
 | `HOSTNAME` | `localhost` | Hostname displayed in the startup banner and used in auto-generated TLS certificate SANs |
 | `PORT` | `3000` | Server port (TCP and UDP) |
 | `WORKERS` | *available parallelism* (floor 4) | Number of worker threads (one TCP listener and QUIC endpoint each) |
-| `MAX_CONNS` | `1024` | Maximum concurrent TCP connections (enforced via a shared semaphore) |
+| `MAX_CONNS` | `4096` | Maximum concurrent TCP connections (enforced via a shared semaphore) |
+| `TCP_HANDLERS_PER_WORKER` | `max(MAX_CONNS / WORKERS, 64)` | Number of pre-spawned TCP handler tasks per worker |
+| `H3_HANDLERS_PER_CONNECTION` | `8` | Number of pre-spawned h3 handler tasks per QUIC connection |
+| `H2_CONN_WINDOW` | `16777216` (16 MiB) | HTTP/2 connection-level flow-control window in bytes
+| `H2_STREAM_WINDOW` | `4194304` (4 MiB) | HTTP/2 per-stream flow-control window in bytes
+| `H2_MAX_FRAME_SIZE` | `65535` | HTTP/2 max frame size (range: 16384–16777215)
+| `H2_MAX_SEND_BUF` | `1048576` (1 MiB) | HTTP/2 max per-stream write buffer before backpressure
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 | `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page |
 | `DISABLE_SRI` | `false` | Set to `1` or `true` to disable Subresource Integrity (content-hashed filenames, `integrity` attributes in HTML, and CSP hash allowlisting). When disabled, CSP uses `'self' 'unsafe-inline'` for scripts and styles to allow the inline version-check script. |

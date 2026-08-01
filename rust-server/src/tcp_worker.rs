@@ -11,7 +11,8 @@ use tokio::sync::{mpsc, OwnedSemaphorePermit};
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::{
-    MAX_CONNECTIONS, TCP_HANDLERS_PER_WORKER, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig,
+    H2_CONN_WINDOW, H2_MAX_FRAME_SIZE, H2_MAX_SEND_BUF, H2_STREAM_WINDOW, MAX_CONNECTIONS,
+    TCP_HANDLERS_PER_WORKER, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig,
 };
 use crate::handlers::handle_request;
 use crate::logging::LogMode;
@@ -53,6 +54,20 @@ async fn handle_tcp_connection(
         async move { handle_request(req, log_mode).await }
     });
 
+    // ── HTTP/2 tuning: larger flow-control windows eliminate
+    // WINDOW_UPDATE round trips when browsers load pages with many
+    // concurrent streams; larger frames reduce per-frame overhead
+    // for bigger bodies; a larger send buffer prevents mid-response
+    // stalls on assets > 400 KB (the hyper default).
+    let mut conn_builder = auto::Builder::new(TokioExecutor::new());
+    {
+        let mut h2 = conn_builder.http2();
+        h2.initial_connection_window_size(H2_CONN_WINDOW)
+            .initial_stream_window_size(H2_STREAM_WINDOW)
+            .max_frame_size(Some(H2_MAX_FRAME_SIZE))
+            .max_send_buf_size(H2_MAX_SEND_BUF);
+    }
+
     let result = if is_tls {
         let tls_stream = match tls_acceptor.accept(prefixed).await {
             Ok(tls) => tls,
@@ -61,11 +76,11 @@ async fn handle_tcp_connection(
                 return;
             }
         };
-        auto::Builder::new(TokioExecutor::new())
+        conn_builder
             .serve_connection(TokioIo::new(tls_stream), svc)
             .await
     } else {
-        auto::Builder::new(TokioExecutor::new())
+        conn_builder
             .serve_connection(TokioIo::new(prefixed), svc)
             .await
     };

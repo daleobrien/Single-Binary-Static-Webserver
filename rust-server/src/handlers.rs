@@ -106,6 +106,13 @@ pub(crate) async fn handle_request(
     let method = req.method();
     let protocol = protocol_str(req.version());
 
+    // Allocate method/path strings only when detailed logging is active;
+    // summary and disabled modes only need the atomic counter.
+    let (method_owned, path_owned) = match &log_mode {
+        LogMode::Detailed { .. } => (method.to_string(), path.to_owned()),
+        _ => (String::new(), String::new()),
+    };
+
     // ── Generic ETag check: 304 early-return without routing ────────
     if is_not_modified(&req) {
         let resp = not_modified_response();
@@ -114,8 +121,8 @@ pub(crate) async fn handle_request(
             inner: body,
             log: Some(TimingInfo {
                 start,
-                method: method.to_string(),
-                path: path.to_owned(),
+                method: method_owned,
+                path: path_owned,
                 status: 304,
                 size: 0,
                 savings: 0,
@@ -137,8 +144,8 @@ pub(crate) async fn handle_request(
         inner: body,
         log: Some(TimingInfo {
             start,
-            method: method.to_string(),
-            path: path.to_owned(),
+            method: method_owned,
+            path: path_owned,
             status,
             size,
             savings,
@@ -178,8 +185,8 @@ async fn h3_handle_one_request<C>(
 
     // ── Full end-to-end timing (CPU + I/O, matching h1/h2) ──
     let start = Instant::now();
-    let path = req.uri().path().to_owned();
-    let method = req.method().to_string();
+    let path = req.uri().path();
+    let method = req.method().as_str();
 
     // Generic ETag check: return 304 for any resource if
     // the client already has the current build version cached.
@@ -198,7 +205,7 @@ async fn h3_handle_one_request<C>(
             return;
         }
         let _ = finished_tx.send(stream);
-        log_h3_outcome(log_mode, &method, &path, 304, 0, 0, start);
+        log_h3_outcome(log_mode, method, path, 304, 0, 0, start);
         return;
     }
 
@@ -241,8 +248,8 @@ async fn h3_handle_one_request<C>(
 
     log_h3_outcome(
         log_mode,
-        &method,
-        &path,
+        method,
+        path,
         status_code,
         content_length as u64,
         savings,

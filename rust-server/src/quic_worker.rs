@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use h3_quinn::Connection as H3QuinnConnection;
@@ -6,6 +6,23 @@ use h3_quinn::Connection as H3QuinnConnection;
 use crate::config::WorkerConfig;
 use crate::handlers::handle_h3_connection;
 use crate::sockets::create_reuseport_udp_socket;
+
+/// Components of a QUIC server config that are expensive to construct:
+/// the TLS→QUIC crypto conversion clones certificate chains and
+/// private-key material. These are cached via [`OnceLock`] so the
+/// conversion happens at most once across all calls to
+/// [`spawn_quic_workers`].
+struct CachedQuicConfig {
+    crypto: Arc<dyn quinn::crypto::ServerConfig>,
+    transport: Arc<quinn::TransportConfig>,
+}
+
+/// Once-initialized QUIC server-config components.
+/// On the first call to [`spawn_quic_workers`] the TLS config is
+/// converted into Quinn's native format and stored here; every
+/// subsequent call (and every worker within a call) reuses the cached
+/// values via cheap [`Arc::clone`].
+static QUIC_CONFIG: OnceLock<CachedQuicConfig> = OnceLock::new();
 
 /// Spawn `num_workers` QUIC (HTTP/3) listener tasks, each on its own
 /// SO_REUSEPORT UDP socket. Returns handles that can be awaited for
@@ -21,26 +38,39 @@ pub(crate) fn spawn_quic_workers(
         shutdown_rx,
     } = cfg;
 
-    // ── Pre-build shared QUIC components once, not per-worker ─────
-    // The TLS→QUIC conversion (`try_into`) and rustls::ServerConfig clone
-    // are the expensive parts — doing them once instead of N times avoids
-    // cloning certificate chains and private keys per worker.
-    let quic_tls_config: quinn::crypto::rustls::QuicServerConfig = {
+    // ── Build / retrieve cached QUIC config components ──────────────
+    // The TLS→QUIC conversion (`try_into`) and rustls::ServerConfig
+    // clone are the expensive parts — caching them via OnceLock means
+    // they run at most once for the lifetime of the process. Subsequent
+    // calls to this function (if any) get the pre-built config for
+    // free, and `tls_config` is simply dropped.
+    let cached = if let Some(c) = QUIC_CONFIG.get() {
+        c
+    } else {
         let mut quic_tls = (*tls_config).clone();
         quic_tls.alpn_protocols = vec![b"h3".to_vec()];
-        quic_tls
+        let crypto: quinn::crypto::rustls::QuicServerConfig = quic_tls
             .try_into()
-            .map_err(|e| format!("Failed to create QUIC crypto config: {e}"))?
+            .map_err(|e| format!("Failed to create QUIC crypto config: {e}"))?;
+
+        let mut transport = quinn::TransportConfig::default();
+        transport.max_idle_timeout(Some(quinn::IdleTimeout::from(
+            quinn::VarInt::from_u32(30_000),
+        )));
+        transport.keep_alive_interval(Some(Duration::from_secs(10)));
+
+        let config = CachedQuicConfig {
+            crypto: Arc::new(crypto),
+            transport: Arc::new(transport),
+        };
+        // set() fails if another thread raced us — fall through to
+        // get() which returns the winner's identical config.
+        let _ = QUIC_CONFIG.set(config);
+        QUIC_CONFIG.get().unwrap()
     };
-    let quic_tls: Arc<dyn quinn::crypto::ServerConfig> = Arc::new(quic_tls_config);
 
-    let mut transport = quinn::TransportConfig::default();
-    transport.max_idle_timeout(Some(quinn::IdleTimeout::from(
-        quinn::VarInt::from_u32(30_000),
-    )));
-    transport.keep_alive_interval(Some(Duration::from_secs(10)));
-    let transport = Arc::new(transport);
-
+    let quic_tls = Arc::clone(&cached.crypto);
+    let transport = Arc::clone(&cached.transport);
     let endpoint_config = quinn::EndpointConfig::default();
     let runtime: Arc<dyn quinn::Runtime> = Arc::new(quinn::TokioRuntime);
 

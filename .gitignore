@@ -29,3 +29,4 @@ certs/*.pem
 certs/*.der
 !certs/.gitkeep
 *.md
+rust-server/dhat-heap.json

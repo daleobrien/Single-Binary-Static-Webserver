@@ -101,18 +101,18 @@ pub(crate) fn spawn_quic_workers(
                                         handle_h3_connection(h3_conn, log_mode).await
                                     {
                                         if !crate::error::is_client_cancel(&*e) {
-                                            eprintln!("h3 connection error: {e}");
+                                            elog!("h3 connection error: {e}");
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("QUIC incoming error: {e}");
+                                    elog!("QUIC incoming error: {e}");
                                 }
                             }
                         });
                     }
                     None => {
-                        eprintln!("QUIC endpoint closed on worker {i}");
+                        elog!("QUIC endpoint closed on worker {i}");
                         break;
                     }
                 }

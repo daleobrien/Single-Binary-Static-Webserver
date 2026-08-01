@@ -27,14 +27,14 @@ async fn handle_tcp_connection(
     let is_tls = match stream.read_exact(&mut first_byte).await {
         Ok(_n) => first_byte[0] == TLS_CONTENT_TYPE_HANDSHAKE,
         Err(e) => {
-            eprintln!("read error ({}): {e}", addr);
+            elog!("read error ({}): {e}", addr);
             return;
         }
     };
 
     // Disable Nagle's algorithm for lower latency on HTTP responses.
     if let Err(e) = stream.set_nodelay(true) {
-        eprintln!("set_nodelay error ({}): {e}", addr);
+        elog!("set_nodelay error ({}): {e}", addr);
     }
 
     let prefixed = PrefixedStream {
@@ -54,7 +54,7 @@ async fn handle_tcp_connection(
         let tls_stream = match tls_acceptor.accept(prefixed).await {
             Ok(tls) => tls,
             Err(e) => {
-                eprintln!("TLS handshake error ({}): {e}", addr);
+                elog!("TLS handshake error ({}): {e}", addr);
                 return;
             }
         };
@@ -68,7 +68,7 @@ async fn handle_tcp_connection(
     };
 
     if let Err(err) = result {
-        eprintln!("connection error ({}): {err}", addr);
+        elog!("connection error ({}): {err}", addr);
     }
 }
 
@@ -109,7 +109,7 @@ pub(crate) fn spawn_tcp_workers(
                         match result {
                             Ok(conn) => conn,
                             Err(e) => {
-                                eprintln!("accept error on TCP worker {i}: {e}");
+                                elog!("accept error on TCP worker {i}: {e}");
                                 break;
                             }
                         }

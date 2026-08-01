@@ -27,7 +27,7 @@ pub fn generate(out_dir: &str) {
     let max_connections: usize = env::var("MAX_CONNS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1024);
+        .unwrap_or(4096);
 
     let shutdown_timeout: u64 = env::var("SHUTDOWN_TIMEOUT_SECS")
         .ok()
@@ -68,7 +68,7 @@ pub fn generate(out_dir: &str) {
 
     writeln!(
         f,
-        "/// Maximum concurrent TCP connections — set via MAX_CONNS at build time (default: 1024)."
+        "/// Maximum concurrent TCP connections — set via MAX_CONNS at build time (default: 4096).",
     )
     .unwrap();
     writeln!(
@@ -108,4 +108,27 @@ pub fn generate(out_dir: &str) {
     .unwrap();
     writeln!(f, "#[allow(dead_code)]").unwrap();
     writeln!(f, "pub(crate) const DISABLE_SRI: bool = {disable_sri};").unwrap();
+    writeln!(f).unwrap();
+
+    let disable_logging: bool = env::var("DISABLE_LOGGING")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(true);
+
+    writeln!(
+        f,
+        "/// Disable all stderr logging — set via DISABLE_LOGGING at build time (default: true)."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// When true, all request logging, error messages, and startup banners are compiled out."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// Set DISABLE_LOGGING=false at build time to re-enable logging."
+    )
+    .unwrap();
+    writeln!(f, "pub(crate) const DISABLE_LOGGING: bool = {disable_logging};").unwrap();
 }

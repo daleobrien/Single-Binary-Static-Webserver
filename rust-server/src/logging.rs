@@ -9,8 +9,10 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-/// Logging strategy: either per-request details or a cheap atomic counter.
+/// Logging strategy: either per-request details, a cheap atomic counter,
+/// or completely disabled (when `DISABLE_LOGGING=true` at build time).
 pub(crate) enum LogMode {
+    Disabled,
     Summary(Arc<AtomicU64>),
     Detailed {
         /// Channel: (method, path, status, size, savings, elapsed_us, protocol)
@@ -24,6 +26,7 @@ pub(crate) enum LogMode {
 impl Clone for LogMode {
     fn clone(&self) -> Self {
         match self {
+            Self::Disabled => Self::Disabled,
             Self::Summary(c) => Self::Summary(Arc::clone(c)),
             Self::Detailed { tx, path_w, size_w, save_w } => Self::Detailed {
                 tx: tx.clone(),
@@ -109,6 +112,12 @@ pub(crate) fn init_logging(
     max_savings_digits: usize,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (LogMode, tokio::task::JoinHandle<()>) {
+    if crate::config::DISABLE_LOGGING {
+        // No-op background task — resolves immediately on drop/await.
+        let handle = tokio::spawn(async {});
+        return (LogMode::Disabled, handle);
+    }
+
     if summary_mode {
         let counter = Arc::new(AtomicU64::new(0));
         let counter_bg = Arc::clone(&counter);
@@ -120,7 +129,7 @@ pub(crate) fn init_logging(
                 tokio::select! {
                     _ = interval.tick() => {
                         let count = counter_bg.swap(0, Ordering::Relaxed);
-                        eprintln!(
+                        elog!(
                             "{count} requests in the last 5s ({:.1} req/s)",
                             count as f64 / 5.0
                         );
@@ -139,7 +148,7 @@ pub(crate) fn init_logging(
             mpsc::unbounded_channel::<(String, String, u16, u64, u64, u64, &'static str)>();
 
         let handle = tokio::spawn(async move {
-            eprintln!(
+            elog!(
                 "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  {:>save_w$}  {:>8}",
                 "PR",
                 "METHOD",
@@ -168,7 +177,7 @@ pub(crate) fn init_logging(
                         }
 
                         for (method, path, status, size, savings, us, protocol) in &batch {
-                            eprintln!(
+                            elog!(
                                 "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {savings:>save_w$}%  {us:>8} \u{00b5}s",
                                 path_w = path_w,
                                 size_w = size_w,
@@ -189,6 +198,7 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
     if let Some(info) = log.take() {
         let elapsed = info.start.elapsed().as_micros() as u64;
         match &info.log_mode {
+            LogMode::Disabled => { /* logging compiled out */ }
             LogMode::Summary(counter) => {
                 counter.fetch_add(1, Ordering::Relaxed);
             }

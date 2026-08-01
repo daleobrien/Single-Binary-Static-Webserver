@@ -10,7 +10,7 @@ pub(crate) async fn wait_for_shutdown(
     shutdown_timeout: Duration,
 ) {
     tokio::signal::ctrl_c().await.ok();
-    eprintln!(
+    elog!(
         "\nReceived shutdown signal — draining in-flight requests (timeout: {}s)...",
         shutdown_timeout.as_secs()
     );
@@ -27,9 +27,9 @@ pub(crate) async fn wait_for_shutdown(
     };
 
     match tokio::time::timeout(shutdown_timeout, drain_future).await {
-        Ok(()) => eprintln!("Shutdown complete — all workers exited cleanly."),
+        Ok(()) => elog!("Shutdown complete — all workers exited cleanly."),
         Err(_elapsed) => {
-            eprintln!(
+            elog!(
                 "Shutdown timed out after {}s — forcing exit (some connections may have been dropped).",
                 shutdown_timeout.as_secs()
             );

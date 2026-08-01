@@ -68,7 +68,7 @@ fn not_modified_response_h3() -> hyper::Response<()> {
 /// compile time, so the call is just a pointer wrap). This avoids the per-request
 /// `HeaderMap::clone()` hash-table allocation entirely.
 #[inline]
-fn response_for_asset(asset: &Asset) -> hyper::Response<Full<Bytes>> {
+pub fn response_for_asset(asset: &Asset) -> hyper::Response<Full<Bytes>> {
     let status =
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(asset.body)));
@@ -193,7 +193,7 @@ where
                         Ok(r) => r,
                         Err(e) => {
                             if !is_client_cancel(&e) {
-                                eprintln!("h3 resolve_request error: {e}");
+                                elog!("h3 resolve_request error: {e}");
                             }
                             return;
                         }
@@ -210,13 +210,13 @@ where
                         let resp = not_modified_response_h3();
                         if let Err(e) = stream.send_response(resp).await {
                             if !is_client_cancel(&e) {
-                                eprintln!("h3 send_response error: {e}");
+                                elog!("h3 send_response error: {e}");
                             }
                             return;
                         }
                         if let Err(e) = stream.finish().await {
                             if !is_client_cancel(&e) {
-                                eprintln!("h3 finish error: {e}");
+                                elog!("h3 finish error: {e}");
                             }
                             return;
                         }
@@ -236,7 +236,7 @@ where
 
                     if let Err(e) = stream.send_response(resp).await {
                         if !is_client_cancel(&e) {
-                            eprintln!("h3 send_response error: {e}");
+                            elog!("h3 send_response error: {e}");
                         }
                         return;
                     }
@@ -246,14 +246,14 @@ where
                             .await
                         {
                             if !is_client_cancel(&e) {
-                                eprintln!("h3 send_data error: {e}");
+                                elog!("h3 send_data error: {e}");
                             }
                             return;
                         }
                     }
                     if let Err(e) = stream.finish().await {
                         if !is_client_cancel(&e) {
-                            eprintln!("h3 finish error: {e}");
+                            elog!("h3 finish error: {e}");
                         }
                         return;
                     }
@@ -322,6 +322,7 @@ fn log_h3_outcome(
     start: Instant,
 ) {
     match log_mode {
+        LogMode::Disabled => { /* logging compiled out */ }
         LogMode::Summary(counter) => {
             counter.fetch_add(1, Ordering::Relaxed);
         }

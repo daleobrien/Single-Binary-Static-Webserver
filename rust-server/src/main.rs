@@ -1,3 +1,13 @@
+/// Compile-time-guarded `eprintln!` — when `DISABLE_LOGGING` is true at
+/// build time, all output is compiled out (zero runtime cost).
+macro_rules! elog {
+    ($($arg:tt)*) => {
+        if !$crate::config::DISABLE_LOGGING {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 mod config;
 mod error;
 mod handlers;

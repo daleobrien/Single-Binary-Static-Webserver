@@ -36,6 +36,12 @@ minify-html = "0.18"
 css-minify = "0.5"
 minify-js = "0.6"
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+dhat = "0.3"
+
+[[bench]]
+name = "handler_bench"
+harness = false
 
 [profile.release]
 opt-level = "z"
@@ -43,3 +49,9 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1

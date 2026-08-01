@@ -28,3 +28,4 @@ react-app/node_modules/
 certs/*.pem
 certs/*.der
 !certs/.gitkeep
+*.md

@@ -13,6 +13,8 @@ pub(crate) fn print_help() -> ! {
     elog!("  PORT                  Server port (default: 3000)");
     elog!("  WORKERS               Number of worker threads (default: available parallelism)");
     elog!("  MAX_CONNS             Maximum concurrent TCP connections (default: 1024)");
+    elog!("  TCP_HANDLERS_PER_WORKER Number of TCP handler tasks per worker (default: max(MAX_CONNS/WORKERS, 64))");
+    elog!("  H3_HANDLERS_PER_CONNECTION Number of h3 handler tasks per connection (default: 8)");
     elog!("  SHUTDOWN_TIMEOUT_SECS Graceful shutdown timeout in seconds (default: 30)");
     elog!("  DISABLE_SRI           Disable Subresource Integrity hashing (default: false)");
     elog!("  DISABLE_LOGGING       Compile out all stderr output (default: true)");

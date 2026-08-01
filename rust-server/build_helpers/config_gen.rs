@@ -34,6 +34,11 @@ pub fn generate(out_dir: &str) {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| (max_connections / num_workers).max(64));
 
+    let h3_handlers_per_connection: usize = env::var("H3_HANDLERS_PER_CONNECTION")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8);
+
     let shutdown_timeout: u64 = env::var("SHUTDOWN_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -96,6 +101,23 @@ pub fn generate(out_dir: &str) {
     writeln!(
         f,
         "pub(crate) const TCP_HANDLERS_PER_WORKER: usize = {tcp_handlers_per_worker};"
+    )
+    .unwrap();
+    writeln!(f).unwrap();
+
+    writeln!(
+        f,
+        "/// Number of request-handler tasks spawned per h3 connection — set via"
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// H3_HANDLERS_PER_CONNECTION at build time (default: 8)."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "pub(crate) const H3_HANDLERS_PER_CONNECTION: usize = {h3_handlers_per_connection};"
     )
     .unwrap();
     writeln!(f).unwrap();

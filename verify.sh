@@ -243,6 +243,7 @@ run_protocol_comparison() {
     #   request     :          $3   $4   $5      $6   $7   $8    $9  $10
     # Aggregate throughput comes from the "finished in" line:
     #   finished in X.XX<unit>, YY req/s, ZZ bytes/s  → total=$3, rps=$4
+
     parse_h2load() {
         echo "$1" | awk '
         /^finished in/ {
@@ -250,22 +251,22 @@ run_protocol_comparison() {
             if (val ~ /us$/)      { gsub(/us$/, "", val); total = val / 1000000 }
             else if (val ~ /ms$/) { gsub(/ms$/, "", val); total = val / 1000 }
             else if (val ~ /s$/)  { gsub(/s$/, "", val);  total = val }
-            rps = $4 + 0   # aggregate req/s (not per-connection)
+            rps = $4 + 0
         }
         /^request[[:space:]]+:/ && !/req\// {
-            lat_min = conv_ms($3)
-            lat_max = conv_ms($4)
-            lat_avg = conv_ms($8)
+            lat_min = conv_us($3)
+            lat_max = conv_us($4)
+            lat_avg = conv_us($8)
         }
         END {
             printf "%.1f|%.1f|%.1f|%.1f|%.3f\n", \
                 lat_min + 0, lat_max + 0, lat_avg + 0, rps + 0, total + 0
         }
-        function conv_ms(v) {
+        function conv_us(v) {
             if (v == "") return 0
-            if (v ~ /us$/) { gsub(/us$/, "", v); return v / 1000 }
-            if (v ~ /ms$/) { gsub(/ms$/, "", v); return v }
-            if (v ~ /s$/)  { gsub(/s$/, "", v);  return v * 1000 }
+            if (v ~ /us$/) { gsub(/us$/, "", v); return v + 0 }
+            if (v ~ /ms$/) { gsub(/ms$/, "", v); return v * 1000 }
+            if (v ~ /s$/)  { gsub(/s$/, "", v);  return v * 1000000 }
             return v + 0
         }'
     }
@@ -276,7 +277,7 @@ run_protocol_comparison() {
         info "Benchmarking HTTP/1.1: $N requests via h2load (50 clients)..."
         H1_OUT=$(h2load -n "$N" -c 50 -m 1 --h1 "$URL" 2>&1) || true
         IFS='|' read -r h1_min h1_max h1_avg h1_rps h1_total <<< "$(parse_h2load "$H1_OUT")"
-        ok "HTTP/1.1  avg=${h1_avg}ms  rps=${h1_rps}  total=${h1_total}s"
+        ok "HTTP/1.1  avg=${h1_avg}μs  rps=${h1_rps}  total=${h1_total}s"
     else
         h1_min=0; h1_max=0; h1_avg=0; h1_rps=0; h1_total=0
     fi
@@ -287,23 +288,27 @@ run_protocol_comparison() {
         info "Benchmarking HTTP/2: $N requests via h2load (10 clients × 10 streams)..."
         H2_OUT=$(h2load -n "$N" -c 10 -m 10 "$URL" 2>&1) || true
         IFS='|' read -r h2_min h2_max h2_avg h2_rps h2_total <<< "$(parse_h2load "$H2_OUT")"
-        ok "HTTP/2    avg=${h2_avg}ms  rps=${h2_rps}  total=${h2_total}s"
+        ok "HTTP/2    avg=${h2_avg}μs  rps=${h2_rps}  total=${h2_total}s"
     else
         h2_min=0; h2_max=0; h2_avg=0; h2_rps=0; h2_total=0
     fi
 
     # ── HTTP/3 benchmark (parallel curl --http3, 10-way concurrency) ───
+    # curl spawns a new process per request so H3 is ~10× slower — use N/10
+    H3_N=$((N / 10))
+    [ "$H3_N" -lt 10 ] && H3_N=10
+
     echo ""
     if $H3_OK; then
-        info "Benchmarking HTTP/3: $N requests via parallel curl (10 concurrent)..."
+        info "Benchmarking HTTP/3: $H3_N requests via parallel curl (10 concurrent)..."
         TMPDIR=$(mktemp -d)
 
         # Warm up QUIC connection
         "$BREW_CURL" -sk --http3 -o /dev/null "$URL" 2>/dev/null || true
         sleep 1
 
-        # Run N requests with xargs -P for 10-way parallelism
-        seq 1 "$N" | xargs -P 10 -I {} "$BREW_CURL" -sk --http3 -o /dev/null -w "%{time_total}\n" "$URL" >> "$TMPDIR/h3.txt" 2>/dev/null
+        # Run H3_N requests with xargs -P for 10-way parallelism
+        seq 1 "$H3_N" | xargs -P 10 -I {} "$BREW_CURL" -sk --http3 -o /dev/null -w "%{time_total}\n" "$URL" >> "$TMPDIR/h3.txt" 2>/dev/null
 
         H3_STATS=$(awk '
         {
@@ -314,30 +319,30 @@ run_protocol_comparison() {
         }
         END {
             if (count > 0) {
-                avg_ms = (total / count) * 1000
-                min_ms = min * 1000
-                max_ms = max * 1000
+                avg_us = (total / count) * 1000000
+                min_us = min * 1000000
+                max_us = max * 1000000
                 rps    = count / total
-                printf "%.1f|%.1f|%.1f|%.1f|%.3f\n", min_ms, max_ms, avg_ms, rps, total
+                printf "%d|%.1f|%.1f|%.1f|%.1f|%.3f\n", count, min_us, max_us, avg_us, rps, total
             } else {
-                printf "0|0|0|0|0\n"
+                printf "0|0|0|0|0|0\n"
             }
         }' "$TMPDIR/h3.txt")
-        IFS='|' read -r h3_min h3_max h3_avg h3_rps h3_total <<< "$H3_STATS"
+        IFS='|' read -r h3_n h3_min h3_max h3_avg h3_rps h3_total <<< "$H3_STATS"
 
         rm -rf "$TMPDIR"
-        ok "HTTP/3    avg=${h3_avg}ms  rps=${h3_rps}  total=${h3_total}s"
+        ok "HTTP/3    avg=${h3_avg}μs  rps=${h3_rps}  total=${h3_total}s"
     else
-        h3_min=0; h3_max=0; h3_avg=0; h3_rps=0; h3_total=0
+        h3_n=0; h3_min=0; h3_max=0; h3_avg=0; h3_rps=0; h3_total=0
     fi
 
     echo ""
 
     # ── Comparison table ──────────────────────────────────────────────
     echo -e "${BOLD}╔═════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║                HTTP Protocol Comparison — $N requests each                 ║${NC}"
+    echo -e "${BOLD}║                      HTTP Protocol Comparison                               ║${NC}"
     echo -e "${BOLD}╠═══════╦══════════╦═══════════╦═══════════╦═══════════╦═══════════╦══════════╣${NC}"
-    echo -e "${BOLD}║ Proto ║ Requests ║  Total(s) ║  Avg(ms)  ║  Min(ms)  ║  Max(ms)  ║ Req/sec  ║${NC}"
+    echo -e "${BOLD}║ Proto ║ Requests ║  Total(s) ║  Avg(μs)  ║  Min(μs)  ║  Max(μs)  ║ Req/sec  ║${NC}"
     echo -e "${BOLD}╠═══════╬══════════╬═══════════╬═══════════╬═══════════╬═══════════╬══════════╣${NC}"
     if $H1_OK; then
         printf "${CYAN}║ h1.1  ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$N" "$h1_total" "$h1_avg" "$h1_min" "$h1_max" "$h1_rps"
@@ -350,7 +355,7 @@ run_protocol_comparison() {
         echo -e "${YELLOW}║ h2    ║    —     ║     —     ║     —     ║     —     ║     —     ║    —     ║${NC}"
     fi
     if $H3_OK; then
-        printf "${CYAN}║ h3    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$N" "$h3_total" "$h3_avg" "$h3_min" "$h3_max" "$h3_rps"
+        printf "${CYAN}║ h3    ${NC}║ %8s ║ %9s ║ %9s ║ %9s ║ %9s ║ %8s ║\n" "$h3_n" "$h3_total" "$h3_avg" "$h3_min" "$h3_max" "$h3_rps"
     else
         echo -e "${YELLOW}║ h3    ║    —     ║     —     ║     —     ║     —     ║     —     ║    —     ║${NC}"
     fi

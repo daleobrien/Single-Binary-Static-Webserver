@@ -105,6 +105,14 @@ DISABLE_SRI = "true"
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 | `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page |
 | `DISABLE_SRI` | `false` | Set to `1` or `true` to disable Subresource Integrity (content-hashed filenames, `integrity` attributes in HTML, and CSP hash allowlisting). When disabled, CSP uses `'self' 'unsafe-inline'` for scripts and styles to allow the inline version-check script. |
+| `DISABLE_LOGGING` | `true` | Compile out all stderr output (request logs, error messages, startup banner, and `--help` text). Set to `false` to re-enable logging. |
+
+In addition to the user-configurable variables above, the build consumes two environment variables that are set automatically and are not meant to be configured manually:
+
+| Variable | Set by | Purpose |
+| --- | --- | --- |
+| `OUT_DIR` | Cargo | Output directory for the build script; `build.rs` writes `generated.rs` and `config_constants.rs` there, and the runtime reads them back via `include!`/`include_bytes!` |
+| `TARGETARCH` | Docker | BuildKit-provided build arg that selects the musl target triplet (`x86_64-unknown-linux-musl` vs `aarch64-unknown-linux-musl`) in the Dockerfile |
 
 ## Build & Run
 
@@ -139,22 +147,17 @@ The server listens on the configured hostname and port:
 
 The Docker build cross-compiles a fully static binary with musl, then compresses it with [UPX](https://upx.github.io/) for minimal image size (`FROM scratch`, ~1.09 MB). A self-signed TLS certificate is generated at build time (or picked up from `certs/` if present).
 
-Configure the build with Docker `--build-arg`:
-
 ```sh
-docker build -f rust-server/Dockerfile \
-  --build-arg HOSTNAME=myhost.local \
-  --build-arg PORT=8080 \
-  -t app-rust .
-docker run -p 8080:8080 --rm app-rust
+docker build -f rust-server/Dockerfile -t app-rust .
+docker run -p 3000:3000 --rm app-rust
 ```
 
-To use build-time env vars with Docker, pass them to the `cargo build` step in the Dockerfile:
+The Dockerfile's only build arg is `TARGETARCH`, which Docker sets automatically (see the configuration table above). The server's build-time env vars are **not** forwarded by the current Dockerfile — to bake them in, declare ARGs and pass them to the `cargo build` step:
 
 ```dockerfile
-ARG HOSTNAME=localhost
-ARG PORT=3000
-# ... then use: HOSTNAME=$HOSTNAME PORT=$PORT cargo build --release
+ARG HOSTNAME=myhost.local
+ARG PORT=8080
+# ... then use: HOSTNAME=$HOSTNAME PORT=$PORT cargo build --release --target "$RUST_TARGET"
 ```
 
 Or simply:
@@ -178,9 +181,9 @@ Logs are batched and flushed once per second with column-aligned output:
 
 ```
 PR  METHOD   PATH            STA  SIZE  TIME
-h2  GET      /                  200   123B  142µs
+h2  GET      /                  200   123B  76µs
 h1  GET      /about             200   456B  89µs
-h3  GET      /style.a1b2.js     200   789B  203µs
+h3  GET      /style.a1b2.js     200   789B  49µs
 ```
 
 ### Summary mode (`--summary`)

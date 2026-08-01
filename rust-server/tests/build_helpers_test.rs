@@ -67,10 +67,14 @@ mod codegen_tests {
 
         let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
-        // Asset struct should declare content_length_str
+        // Asset struct should declare content_length_str and headers
         assert!(
             generated.contains("pub content_length_str: &'static str,"),
             "Asset struct must include content_length_str field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub headers: &'static [(&'static str, &'static str)],"),
+            "Asset struct must include headers field (static str-pair slice).\nGenerated:\n{generated}"
         );
     }
 
@@ -177,6 +181,10 @@ mod codegen_tests {
         assert!(
             generated.contains("content_length_str: INDEX_HTML_LEN_STR,"),
             "Asset instance must initialize content_length_str from INDEX_HTML_LEN_STR.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("headers: HEADERS_0,"),
+            "Asset instance must initialize headers from HEADERS_0.\nGenerated:\n{generated}"
         );
         // Version asset instance
         assert!(

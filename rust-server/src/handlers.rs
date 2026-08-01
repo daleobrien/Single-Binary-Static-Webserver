@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
-use crate::{route, Asset, BUILD_VERSION, HEADER_MAPS};
+use crate::{route, Asset, BUILD_VERSION};
 
 // ── Protocol strings as static slices — no per-request allocation ─────
 
@@ -63,17 +63,23 @@ fn not_modified_response_h3() -> hyper::Response<()> {
 
 /// Build a full response for an asset's body (h1/h2 path).
 ///
-/// The `HeaderMap::clone()` from `HEADER_MAPS` is the single per-request
-/// allocation. This replaces the old `build_response → into_parts → from_parts`
-/// round-trip by directly wrapping the body in `TimedBody`, avoiding an
-/// intermediate `Response` construction.
+/// Headers are stored as `&[(&str, &str)]` and converted to `HeaderName`/`HeaderValue`
+/// at request time via `from_static` (a const fn — validation already happened at
+/// compile time, so the call is just a pointer wrap). This avoids the per-request
+/// `HeaderMap::clone()` hash-table allocation entirely.
 #[inline]
 fn response_for_asset(asset: &Asset) -> hyper::Response<Full<Bytes>> {
     let status =
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(asset.body)));
     *resp.status_mut() = status;
-    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
+    let headers = resp.headers_mut();
+    for &(name, value) in asset.headers {
+        headers.insert(
+            hyper::header::HeaderName::from_static(name),
+            hyper::header::HeaderValue::from_static(value),
+        );
+    }
     resp
 }
 
@@ -282,16 +288,22 @@ where
 
 // ── Extracted h3 helpers (de-duplicate the logging and response-construction logic) ──
 
-/// Build an h3 `Response<()>` by cloning the asset's pre-built `HeaderMap`
-/// and adding the `Content-Length` header required by h3.
+/// Build an h3 `Response<()>` from the asset's static header slice,
+/// adding the `Content-Length` header required by h3.
 #[inline]
 fn h3_response_for_asset(asset: &Asset) -> hyper::Response<()> {
     let status =
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(());
     *resp.status_mut() = status;
-    *resp.headers_mut() = HEADER_MAPS[asset.header_index].clone();
-    resp.headers_mut().insert(
+    let headers = resp.headers_mut();
+    for &(name, value) in asset.headers {
+        headers.insert(
+            hyper::header::HeaderName::from_static(name),
+            hyper::header::HeaderValue::from_static(value),
+        );
+    }
+    headers.insert(
         hyper::header::CONTENT_LENGTH,
         hyper::header::HeaderValue::from_static(asset.content_length_str),
     );

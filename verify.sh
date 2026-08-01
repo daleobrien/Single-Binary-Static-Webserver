@@ -152,7 +152,8 @@ run_stress_tests() {
 QUICK=false
 TEST_ONLY=false
 LOAD_ONLY=false
-LOAD_REQUESTS="${LOAD_REQUESTS:-10000}"
+LOAD_REQUESTS_FOR_H1_H2="${LOAD_REQUESTS_FOR_H1_H2:-500000}"
+LOAD_REQUESTS_FOR_H3="${LOAD_REQUESTS_FOR_H3:-1000}"
 for arg in "$@"; do
     case "$arg" in
         --quick)      QUICK=true ;;
@@ -192,7 +193,7 @@ run_protocol_comparison() {
     fi
     ok "Server responding on https://localhost:$PORT (HTTP $HTTP_CODE)"
 
-    N="$LOAD_REQUESTS"
+    N="$LOAD_REQUESTS_FOR_H1_H2"
     URL="https://localhost:$PORT/"
 
     # Locate brew's curl (has HTTP/3 support; fall back to system curl)
@@ -294,9 +295,8 @@ run_protocol_comparison() {
     fi
 
     # ── HTTP/3 benchmark (parallel curl --http3, 10-way concurrency) ───
-    # curl spawns a new process per request so H3 is ~10× slower — use N/10
-    H3_N=$((N / 10))
-    [ "$H3_N" -lt 10 ] && H3_N=10
+    # curl spawns a new process per request so H3 uses a fixed 1000 requests
+    H3_N="$LOAD_REQUESTS_FOR_H3"
 
     echo ""
     if $H3_OK; then

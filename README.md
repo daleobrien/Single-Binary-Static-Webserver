@@ -150,7 +150,7 @@ The server listens on the configured hostname and port:
 
 ### Docker
 
-The Docker build cross-compiles a fully static binary with musl, then compresses it with [UPX](https://upx.github.io/) for minimal image size (`FROM scratch`, ~1.09 MB). A self-signed TLS certificate is generated at build time (or picked up from `certs/` if present).
+The Docker build cross-compiles a fully static binary with musl, then compresses it with [UPX](https://upx.github.io/) for minimal image size (`FROM scratch`, ~1.2 MB). A self-signed TLS certificate is generated at build time (or picked up from `certs/` if present).
 
 ```sh
 docker build -f rust-server/Dockerfile -t app-rust .

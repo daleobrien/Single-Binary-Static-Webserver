@@ -2,10 +2,10 @@
     <source srcset="/public/favicon.svg" type="image/svg+xml">
     <img src="/public/favicon.svg" width="36" height="36" alt="" align="top" />
   </picture>
-  A Rust-based static web server with TLS
+  Static - A very fast standalone static file web server
 </h1>
 
-A minimal, self-contained web server built on [Hyper](https://hyper.rs/), [rustls](https://github.com/rustls/rustls), and [quinn](https://github.com/quinn-rs/quinn) that serves HTML, CSS, JavaScript, and other static files — all minified then gzip-compressed at build time and embedded directly in a single binary. Zero runtime dependencies, zero disk I/O, zero runtime compression.
+A minimal, self-contained web server written in Rust that is built on [Hyper](https://hyper.rs/), [rustls](https://github.com/rustls/rustls), and [quinn](https://github.com/quinn-rs/quinn) that serves HTML, CSS, JavaScript, and other static files — all minified then gzip-compressed at build time and embedded directly in a single binary. Zero runtime dependencies, zero disk I/O, zero runtime compression.
 
 ## Features
 

@@ -76,6 +76,7 @@ pub fn response_for_asset(asset: &Asset) -> hyper::Response<Full<Bytes>> {
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(asset.body)));
     *resp.status_mut() = status;
     let headers = resp.headers_mut();
+    headers.reserve(asset.headers.len());
     for &(name, value) in asset.headers {
         headers.insert(
             hyper::header::HeaderName::from_static(name),
@@ -348,6 +349,8 @@ fn h3_response_for_asset(asset: &Asset) -> hyper::Response<()> {
     let mut resp = hyper::Response::new(());
     *resp.status_mut() = status;
     let headers = resp.headers_mut();
+    // +1 for the Content-Length header we add below.
+    headers.reserve(asset.headers.len() + 1);
     for &(name, value) in asset.headers {
         headers.insert(
             hyper::header::HeaderName::from_static(name),

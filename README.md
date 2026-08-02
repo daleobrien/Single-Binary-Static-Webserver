@@ -1,8 +1,7 @@
-<h1>
-    <picture>
-      <source srcset="https://raw.githubusercontent.com/danbugs/small-static-webserver-with-tls/main/public/favicon.svg" type="image/svg+xml">
-      <img src="public/favicon.svg" width="36" height="36" alt="" align="top" />
-    </picture>
+<h1><picture>
+    <source srcset="/public/favicon.svg" type="image/svg+xml">
+    <img src="/public/favicon.svg" width="36" height="36" alt="" align="top" />
+  </picture>
   A Rust-based static web server with TLS
 </h1>
 

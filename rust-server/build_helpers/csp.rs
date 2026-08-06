@@ -49,7 +49,7 @@ pub(super) fn build_csp_values(
             parts.extend(js_hashes);
             parts.join(" ")
         },
-        style_src: join_value("'self'", &css_hashes),
+        style_src: join_value("'self' 'unsafe-inline'", &css_hashes),
         img_src: join_value("'self'", &img_hashes),
         font_src: join_value("'self'", &font_hashes),
         media_src: join_value("'self'", &media_hashes),
@@ -237,7 +237,7 @@ mod tests {
         let map = HashMap::new();
         let v = build_csp_values(&map, "scripthash", false);
         assert_eq!(v.script_src, "'sha256-scripthash'");
-        assert_eq!(v.style_src, "'self'");
+        assert_eq!(v.style_src, "'self' 'unsafe-inline'");
         assert_eq!(v.img_src, "'self'");
         assert_eq!(v.font_src, "'self'");
         assert_eq!(v.media_src, "'self'");
@@ -255,7 +255,7 @@ mod tests {
         assert!(v.script_src.contains("'sha256-scripthash'"));
         assert!(v.script_src.contains("'sha256-js123'"));
         assert!(v.script_src.contains("'sha256-js456'"));
-        assert_eq!(v.style_src, "'self' 'sha256-css789'");
+        assert_eq!(v.style_src, "'self' 'unsafe-inline' 'sha256-css789'");
         // Non-CSS/JS should stay as bare 'self'
         assert_eq!(v.img_src, "'self'");
         assert_eq!(v.font_src, "'self'");
@@ -272,7 +272,7 @@ mod tests {
         ]);
         let v = build_csp_values(&map, "scripthash", false);
         assert_eq!(v.script_src, "'sha256-scripthash'");
-        assert_eq!(v.style_src, "'self'");
+        assert_eq!(v.style_src, "'self' 'unsafe-inline'");
         assert!(v.img_src.contains("'sha256-img1'"));
         assert!(v.img_src.contains("'sha256-img2'"));
         assert!(v.font_src.contains("'sha256-fnt1'"));

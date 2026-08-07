@@ -37,8 +37,8 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_timeout_default_is_30() {
-        assert_eq!(SHUTDOWN_TIMEOUT_SECS, 30);
+    fn shutdown_timeout_default_is_3() {
+        assert_eq!(SHUTDOWN_TIMEOUT_SECS, 3);
     }
 
     #[test]

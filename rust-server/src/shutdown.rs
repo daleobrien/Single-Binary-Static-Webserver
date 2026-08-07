@@ -4,6 +4,9 @@ use tokio::task::JoinHandle;
 
 /// Wait for Ctrl+C, signal all workers to stop, then drain them with a
 /// timeout. Prints status messages to stderr throughout.
+///
+/// A **second** Ctrl+C (or SIGTERM) during the drain phase forces an
+/// immediate exit without waiting for in-flight requests to finish.
 pub(crate) async fn wait_for_shutdown(
     shutdown_tx: watch::Sender<bool>,
     handles: Vec<JoinHandle<()>>,
@@ -11,7 +14,7 @@ pub(crate) async fn wait_for_shutdown(
 ) {
     tokio::signal::ctrl_c().await.ok();
     elog!(
-        "\nReceived shutdown signal — draining in-flight requests (timeout: {}s)...",
+        "\nReceived shutdown signal — draining in-flight requests (timeout: {}s, press Ctrl+C again to force-quit)...",
         shutdown_timeout.as_secs()
     );
 
@@ -20,6 +23,14 @@ pub(crate) async fn wait_for_shutdown(
     // Drop the sender so workers in `changed()` see the channel as closed.
     drop(shutdown_tx);
 
+    // Spawn a task that listens for a second Ctrl+C. If one arrives,
+    // the process exits immediately — no graceful drain, no waiting.
+    let force_quit = tokio::spawn(async {
+        tokio::signal::ctrl_c().await.ok();
+        elog!("Second interrupt received — exiting immediately.");
+        std::process::exit(1);
+    });
+
     let drain_future = async {
         for handle in handles {
             let _ = handle.await;
@@ -27,8 +38,12 @@ pub(crate) async fn wait_for_shutdown(
     };
 
     match tokio::time::timeout(shutdown_timeout, drain_future).await {
-        Ok(()) => elog!("Shutdown complete — all workers exited cleanly."),
+        Ok(()) => {
+            force_quit.abort();
+            elog!("Shutdown complete — all workers exited cleanly.");
+        }
         Err(_elapsed) => {
+            force_quit.abort();
             elog!(
                 "Shutdown timed out after {}s — forcing exit (some connections may have been dropped).",
                 shutdown_timeout.as_secs()

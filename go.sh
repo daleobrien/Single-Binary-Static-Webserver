@@ -17,6 +17,8 @@ else
     echo ""
     echo ">>> Binary size: $(ls -lh "$BIN" | awk '{print $5}')"
     echo ""
+    # Stop any existing process
+    lsof -ti :3000 | xargs kill
     exec "$BIN"
     popd > /dev/null
 fi

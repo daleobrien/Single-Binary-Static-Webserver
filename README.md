@@ -94,6 +94,8 @@ SHUTDOWN_TIMEOUT_SECS = "60"
 NOT_FOUND_FILENAME = "not-found.html"
 DISABLE_SRI = "true"
 ALLOW_INLINE_STYLES = "true"
+FORM_ACTION = "https://auth.example.com"
+CONNECT_SRC = "https://api.example.com"
 ```
 
 | Variable | Default | Description |
@@ -112,6 +114,8 @@ ALLOW_INLINE_STYLES = "true"
 | `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page |
 | `DISABLE_SRI` | `false` | Set to `1` or `true` to disable Subresource Integrity (content-hashed filenames, `integrity` attributes in HTML, and CSP hash allowlisting). When disabled, CSP uses `'self' 'unsafe-inline'` for scripts and styles to allow the inline version-check script. |
 | `ALLOW_INLINE_STYLES` | `false` | Set to `1` or `true` to add `'unsafe-inline'` to the `style-src` CSP directive while keeping SRI hashes for all other resources. Use this when React packages (e.g. styled-components, emotion) need to inject `<style>` elements dynamically at runtime. |
+| `FORM_ACTION` | *(not set)* | Space-separated list of additional external origins for the `form-action` CSP directive. Set this when your app submits `<form>` POSTs to external endpoints (e.g. SAML authentication callbacks). `'self'` is always included automatically. |
+| `CONNECT_SRC` | *(not set)* | Space-separated list of additional external origins for the `connect-src` CSP directive. Set this when your app makes fetch/XHR calls to external backends. `'self'` is always included automatically. |
 | `DISABLE_LOGGING` | `true` | Compile out all stderr output (request logs, error messages, startup banner, and `--help` text). Set to `false` to re-enable logging. |
 
 In addition to the user-configurable variables above, the build consumes two environment variables that are set automatically and are not meant to be configured manually:

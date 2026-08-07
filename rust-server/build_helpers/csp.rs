@@ -12,6 +12,8 @@ pub(super) struct CspValues {
     pub font_src: String,
     pub media_src: String,
     pub frame_src: String,
+    pub form_action: String,
+    pub connect_src: String,
 }
 
 /// Build `CspValues` by filtering `file_hashes` by extension.
@@ -32,6 +34,8 @@ pub(super) fn build_csp_values(
             font_src: "'self'".to_string(),
             media_src: "'self'".to_string(),
             frame_src: "'self'".to_string(),
+            form_action: read_origin_env("FORM_ACTION"),
+            connect_src: read_origin_env("CONNECT_SRC"),
         };
     }
 
@@ -53,6 +57,13 @@ pub(super) fn build_csp_values(
         join_value("'self'", &css_hashes)
     };
 
+    // Read configurable CSP origins from env vars (space-separated).
+    // 'self' is always included automatically — the user only needs to
+    // specify the additional external origins.
+    // Defaults to "'self'" when the env var is not set.
+    let form_action = read_origin_env("FORM_ACTION");
+    let connect_src = read_origin_env("CONNECT_SRC");
+
     CspValues {
         script_src: {
             let mut parts = vec![format!("'sha256-{csp_script_hash}'")];
@@ -64,6 +75,8 @@ pub(super) fn build_csp_values(
         font_src: join_value("'self'", &font_hashes),
         media_src: join_value("'self'", &media_hashes),
         frame_src: "'self'".to_string(),
+        form_action,
+        connect_src,
     }
 }
 
@@ -121,17 +134,34 @@ fn build_csp_for_source(source: &str, values: &CspValues) -> String {
     }
 
     // Always-present directives
-    directives.push("connect-src 'self'".into());
+    directives.push(format!("connect-src {}", values.connect_src));
     directives.push("manifest-src 'self'".into());
     directives.push("object-src 'none'".into());
     directives.push("base-uri 'self'".into());
-    directives.push("form-action 'self'".into());
+    directives.push(format!("form-action {}", values.form_action));
     directives.push("frame-ancestors 'none'".into());
 
     directives.join("; ")
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Read a CSP origin env var, always ensuring `'self'` is present.
+/// - Not set → `"'self'"`
+/// - `"https://auth.example.com"` → `"'self' https://auth.example.com"`
+/// - `"'self' https://auth.example.com"` → unchanged
+fn read_origin_env(name: &str) -> String {
+    resolve_origin(std::env::var(name).ok())
+}
+
+/// Pure version of `read_origin_env` for testing.
+fn resolve_origin(raw: Option<String>) -> String {
+    match raw {
+        Some(val) if val.contains("'self'") => val,
+        Some(val) => format!("'self' {val}"),
+        None => "'self'".to_string(),
+    }
+}
 
 /// Collect sha256 hashes for files matching any of the given extensions.
 fn collect_hashes(file_hashes: &HashMap<String, String>, exts: &[&str]) -> Vec<String> {
@@ -165,6 +195,8 @@ mod tests {
             font_src: "'self' 'sha256-font'".into(),
             media_src: "'self' 'sha256-media'".into(),
             frame_src: "'self'".into(),
+            form_action: "'self'".into(),
+            connect_src: "'self'".into(),
         }
     }
 
@@ -238,6 +270,43 @@ mod tests {
         assert_eq!(
             join_value("'self'", &hashes),
             "'self' 'sha256-aaa' 'sha256-bbb'"
+        );
+    }
+
+    // ── resolve_origin ────────────────────────────────────────────
+
+    #[test]
+    fn resolve_origin_not_set() {
+        assert_eq!(resolve_origin(None), "'self'");
+    }
+
+    #[test]
+    fn resolve_origin_only_self() {
+        assert_eq!(resolve_origin(Some("'self'".into())), "'self'");
+    }
+
+    #[test]
+    fn resolve_origin_external_only_adds_self() {
+        assert_eq!(
+            resolve_origin(Some("https://auth.example.com".into())),
+            "'self' https://auth.example.com"
+        );
+    }
+
+    #[test]
+    fn resolve_origin_self_plus_external_preserved() {
+        assert_eq!(
+            resolve_origin(Some("'self' https://auth.example.com https://api.example.com".into())),
+            "'self' https://auth.example.com https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn resolve_origin_self_not_at_start_but_present() {
+        // If the user typed it somewhere in the list, we don't duplicate.
+        assert_eq!(
+            resolve_origin(Some("https://a.com 'self' https://b.com".into())),
+            "https://a.com 'self' https://b.com"
         );
     }
 

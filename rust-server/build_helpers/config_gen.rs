@@ -219,11 +219,38 @@ pub fn generate(out_dir: &str) {
     .unwrap();
     writeln!(
         f,
-        "/// When true, content-hashed filenames, integrity attributes, and CSP hashes are omitted."
+        "/// When true, content-hashed filenames, integrity attributes, and CSP hashes are omitted,"
     )
     .unwrap();
-    writeln!(f, "#[allow(dead_code)]").unwrap();
+    writeln!(
+        f,
+        "/// and 'unsafe-inline' is added to both script-src and style-src."
+    )
+    .unwrap();
     writeln!(f, "pub(crate) const DISABLE_SRI: bool = {disable_sri};").unwrap();
+    writeln!(f).unwrap();
+
+    let allow_inline_styles: bool = env::var("ALLOW_INLINE_STYLES")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    writeln!(
+        f,
+        "/// Allow inline styles in CSP — set via ALLOW_INLINE_STYLES at build time (default: false)."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// When true, 'unsafe-inline' is added to style-src to allow dynamically injected CSS"
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// (e.g. from React packages like styled-components). SRI hashes are still enforced."
+    )
+    .unwrap();
+    writeln!(f, "pub(crate) const ALLOW_INLINE_STYLES: bool = {allow_inline_styles};").unwrap();
     writeln!(f).unwrap();
 
     let disable_logging: bool = env::var("DISABLE_LOGGING")

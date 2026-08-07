@@ -21,6 +21,7 @@ pub(crate) fn print_help() -> ! {
     elog!("  H2_MAX_SEND_BUF       HTTP/2 per-stream send buffer in bytes (default: 1 MiB)");
     elog!("  SHUTDOWN_TIMEOUT_SECS Graceful shutdown timeout in seconds (default: 3)");
     elog!("  DISABLE_SRI           Disable Subresource Integrity hashing (default: false)");
+    elog!("  ALLOW_INLINE_STYLES   Allow 'unsafe-inline' in style-src for dynamic CSS (default: false)");
     elog!("  DISABLE_LOGGING       Compile out all stderr output (default: true)");
     std::process::exit(0);
 }

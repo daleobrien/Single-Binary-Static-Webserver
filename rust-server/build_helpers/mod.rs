@@ -56,6 +56,12 @@ pub fn run() {
         .map(|s| s == "1" || s.to_lowercase() == "true")
         .unwrap_or(false);
 
+    // ── Read ALLOW_INLINE_STYLES env var ──
+    let allow_inline_styles: bool = std::env::var("ALLOW_INLINE_STYLES")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
     // ── Two-pass file processing ──
     let mut uncompressed_lens: HashMap<String, usize> = HashMap::new();
     let mut file_hashes =
@@ -74,7 +80,7 @@ pub fn run() {
 
     // ── Pre-compute CSP directive values for reuse across both regular
     //     asset metadata and the 404 fallback header set. ──
-    let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash, disable_sri);
+    let csp_values = csp::build_csp_values(&file_hashes, &csp_script_hash, disable_sri, allow_inline_styles);
 
     // ── Configurable 404 filename (env var with default) ──
     let not_found_filename =

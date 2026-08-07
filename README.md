@@ -93,6 +93,7 @@ MAX_CONNS = "2048"
 SHUTDOWN_TIMEOUT_SECS = "60"
 NOT_FOUND_FILENAME = "not-found.html"
 DISABLE_SRI = "true"
+ALLOW_INLINE_STYLES = "true"
 ```
 
 | Variable | Default | Description |
@@ -110,6 +111,7 @@ DISABLE_SRI = "true"
 | `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout — how long to wait for in-flight requests after SIGINT/SIGTERM |
 | `NOT_FOUND_FILENAME` | `404.html` | Name of the file in `public/` used as the custom 404 page |
 | `DISABLE_SRI` | `false` | Set to `1` or `true` to disable Subresource Integrity (content-hashed filenames, `integrity` attributes in HTML, and CSP hash allowlisting). When disabled, CSP uses `'self' 'unsafe-inline'` for scripts and styles to allow the inline version-check script. |
+| `ALLOW_INLINE_STYLES` | `false` | Set to `1` or `true` to add `'unsafe-inline'` to the `style-src` CSP directive while keeping SRI hashes for all other resources. Use this when React packages (e.g. styled-components, emotion) need to inject `<style>` elements dynamically at runtime. |
 | `DISABLE_LOGGING` | `true` | Compile out all stderr output (request logs, error messages, startup banner, and `--help` text). Set to `false` to re-enable logging. |
 
 In addition to the user-configurable variables above, the build consumes two environment variables that are set automatically and are not meant to be configured manually:

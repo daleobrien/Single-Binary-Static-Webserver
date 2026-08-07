@@ -4,6 +4,7 @@ use hyper::body::Incoming;
 use hyper::header::{HeaderValue, CACHE_CONTROL, ETAG};
 use hyper::Request;
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -15,9 +16,9 @@ use crate::{route, Asset, BUILD_VERSION};
 
 // ── Protocol strings as static slices — no per-request allocation ─────
 
-const PROTO_H1: &str = "h1";
-const PROTO_H2: &str = "h2";
-const PROTO_H3: &str = "h3";
+const PROTO_H1: &str = "HTTP/1.1";
+const PROTO_H2: &str = "HTTP/2.0";
+const PROTO_H3: &str = "HTTP/3";
 
 /// Returns true if the request's `If-None-Match` header matches the build version,
 /// meaning the client already has the latest version of all static resources.
@@ -100,6 +101,7 @@ fn protocol_str(version: hyper::Version) -> &'static str {
 /// (i.e., after the socket write), matching the h3 end-to-end scope.
 pub(crate) async fn handle_request(
     req: Request<Incoming>,
+    remote_addr: SocketAddr,
     log_mode: LogMode,
 ) -> Result<hyper::Response<TimedBody>, Infallible> {
     let start = Instant::now();
@@ -122,11 +124,11 @@ pub(crate) async fn handle_request(
             inner: body,
             log: Some(TimingInfo {
                 start,
+                remote_addr,
                 method: method_owned,
                 path: path_owned,
                 status: 304,
                 size: 0,
-                savings: 0,
                 protocol,
                 log_mode,
             }),
@@ -137,7 +139,6 @@ pub(crate) async fn handle_request(
     let asset = route(path);
     let status = asset.status_code;
     let size = asset.content_length as u64;
-    let savings = asset.savings_pct as u64;
     let resp = response_for_asset(asset);
     let (parts, body) = resp.into_parts();
 
@@ -145,11 +146,11 @@ pub(crate) async fn handle_request(
         inner: body,
         log: Some(TimingInfo {
             start,
+            remote_addr,
             method: method_owned,
             path: path_owned,
             status,
             size,
-            savings,
             protocol,
             log_mode,
         }),
@@ -168,6 +169,7 @@ type H3Resolver<C> = h3::server::RequestResolver<C, Bytes>;
 /// Called from a pre-spawned handler — no additional `tokio::spawn` required.
 async fn h3_handle_one_request<C>(
     resolver: H3Resolver<C>,
+    remote_addr: SocketAddr,
     log_mode: &LogMode,
     finished_tx: &mpsc::UnboundedSender<H3Stream<C>>,
 ) where
@@ -206,14 +208,13 @@ async fn h3_handle_one_request<C>(
             return;
         }
         let _ = finished_tx.send(stream);
-        log_h3_outcome(log_mode, method, path, 304, 0, 0, start);
+        log_h3_outcome(log_mode, remote_addr, method, path, 304, 0, start);
         return;
     }
 
     let asset = route(&path);
     let status_code = asset.status_code;
     let content_length = asset.content_length;
-    let savings = asset.savings_pct as u64;
 
     let resp = h3_response_for_asset(asset);
 
@@ -249,11 +250,11 @@ async fn h3_handle_one_request<C>(
 
     log_h3_outcome(
         log_mode,
+        remote_addr,
         method,
         path,
         status_code,
         content_length as u64,
-        savings,
         start,
     );
 }
@@ -272,6 +273,7 @@ async fn h3_handle_one_request<C>(
 /// pages over HTTP/3.
 pub(crate) async fn handle_h3_connection<C>(
     conn: C,
+    remote_addr: SocketAddr,
     log_mode: LogMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
@@ -297,7 +299,7 @@ where
         let log_mode = log_mode.clone();
         tokio::spawn(async move {
             while let Some(resolver) = rx.recv().await {
-                h3_handle_one_request::<C>(resolver, &log_mode, &finished_tx).await;
+                h3_handle_one_request::<C>(resolver, remote_addr, &log_mode, &finished_tx).await;
             }
         });
     }
@@ -368,11 +370,11 @@ fn h3_response_for_asset(asset: &Asset) -> hyper::Response<()> {
 /// (304 and full response) to eliminate duplicated logging logic.
 fn log_h3_outcome(
     log_mode: &LogMode,
+    remote_addr: SocketAddr,
     method: &str,
     path: &str,
     status: u16,
     size: u64,
-    savings: u64,
     start: Instant,
 ) {
     match log_mode {
@@ -380,14 +382,14 @@ fn log_h3_outcome(
         LogMode::Summary(counter) => {
             counter.fetch_add(1, Ordering::Relaxed);
         }
-        LogMode::Detailed { tx, .. } => {
+        LogMode::Detailed { tx } => {
             let elapsed = start.elapsed().as_micros() as u64;
             let _ = tx.send((
+                remote_addr,
                 method.to_string(),
                 path.to_owned(),
                 status,
                 size,
-                savings,
                 elapsed,
                 PROTO_H3,
             ));
@@ -463,16 +465,16 @@ mod tests {
 
     #[test]
     fn protocol_str_http2_returns_h2() {
-        assert_eq!(protocol_str(hyper::Version::HTTP_2), "h2");
+        assert_eq!(protocol_str(hyper::Version::HTTP_2), PROTO_H2);
     }
 
     #[test]
     fn protocol_str_http11_returns_h1() {
-        assert_eq!(protocol_str(hyper::Version::HTTP_11), "h1");
+        assert_eq!(protocol_str(hyper::Version::HTTP_11), PROTO_H1);
     }
 
     #[test]
     fn protocol_str_http10_returns_h1() {
-        assert_eq!(protocol_str(hyper::Version::HTTP_10), "h1");
+        assert_eq!(protocol_str(hyper::Version::HTTP_10), PROTO_H1);
     }
 }

@@ -41,8 +41,6 @@ mod codegen_tests {
             not_found_const_prefix: None,
             files: vec!["index.html".to_string()],
             has_404: false,
-            max_path_len: 11,
-            max_size: 1024,
             use_uncompressed: vec![false],
             version_use_uncompressed: true,
             uncompressed_lengths: vec![1024],
@@ -209,8 +207,7 @@ mod codegen_tests {
 
         fs::write(gzip_dir.join("index.html.gz"), b"a").unwrap(); // 1 byte
 
-        let mut ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
-        ctx.max_size = 1;
+        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
 
         codegen::generate(&ctx);
 
@@ -218,10 +215,7 @@ mod codegen_tests {
 
         // The LEN_STR must contain the same value as LEN (as a string)
         assert!(generated.contains("const INDEX_HTML_LEN: usize = 1;"));
-        assert!(generated.contains("const INDEX_HTML_LEN_STR: &str = \"1\";"));
-
-        // MAX_SIZE_DIGITS should be appropriate (1 digit for max_size=1)
-        assert!(generated.contains("pub const MAX_SIZE_DIGITS: usize = 1;"));
+        assert!(generated.contains("const INDEX_HTML_LEN_STR: &str = \"1\""));
 
         // The struct definition, instance initialization, and the _LEN_STR constant
         // must all reference the same identifier pattern

@@ -2,11 +2,12 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::{Body, Frame};
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 /// Logging strategy: either per-request details, a cheap atomic counter,
@@ -15,11 +16,8 @@ pub(crate) enum LogMode {
     Disabled,
     Summary(Arc<AtomicU64>),
     Detailed {
-        /// Channel: (method, path, status, size, savings, elapsed_us, protocol)
-        tx: mpsc::UnboundedSender<(String, String, u16, u64, u64, u64, &'static str)>,
-        path_w: usize,
-        size_w: usize,
-        save_w: usize,
+        /// Channel: (remote_addr, method, path, status, size, elapsed_us, protocol)
+        tx: mpsc::UnboundedSender<(SocketAddr, String, String, u16, u64, u64, &'static str)>,
     },
 }
 
@@ -28,11 +26,8 @@ impl Clone for LogMode {
         match self {
             Self::Disabled => Self::Disabled,
             Self::Summary(c) => Self::Summary(Arc::clone(c)),
-            Self::Detailed { tx, path_w, size_w, save_w } => Self::Detailed {
+            Self::Detailed { tx } => Self::Detailed {
                 tx: tx.clone(),
-                path_w: *path_w,
-                size_w: *size_w,
-                save_w: *save_w,
             },
         }
     }
@@ -44,11 +39,11 @@ impl Clone for LogMode {
 /// fully consumed by hyper (i.e., written to the socket).
 pub(crate) struct TimingInfo {
     pub(crate) start: Instant,
+    pub(crate) remote_addr: SocketAddr,
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) status: u16,
     pub(crate) size: u64,
-    pub(crate) savings: u64,
     pub(crate) protocol: &'static str,
     pub(crate) log_mode: LogMode,
 }
@@ -100,6 +95,79 @@ impl Drop for TimedBody {
     }
 }
 
+// ── CLF timestamp formatting ──────────────────────────────────────
+
+/// Format the current UTC time as a Common Log Format timestamp:
+/// `DD/Mon/YYYY:HH:MM:SS +0000`
+///
+/// Uses Howard Hinnant's `civil_from_days` algorithm to convert the Unix
+/// timestamp to year/month/day without any external dependencies.
+fn format_clf_time() -> String {
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    let time_of_day = secs % 86_400;
+    let hours = time_of_day / 3_600;
+    let minutes = (time_of_day % 3_600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Days since 1970-01-01 → days since 0000-03-01 (Hinnant's epoch)
+    let days = (secs / 86_400) as i64;
+    let z = days + 719_468;
+
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    static MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    format!(
+        "{:02}/{}/{:04}:{:02}:{:02}:{:02} +0000",
+        d,
+        MONTHS[(m - 1) as usize],
+        y,
+        hours,
+        minutes,
+        seconds,
+    )
+}
+
+/// Produce a Common Log Format line for a single request.
+///
+/// CLF format:
+/// `remote_addr - - [DD/Mon/YYYY:HH:MM:SS +0000] "METHOD /path HTTP/x.y" status size`
+fn format_clf_entry(
+    remote_addr: SocketAddr,
+    method: &str,
+    path: &str,
+    protocol: &str,
+    status: u16,
+    size: u64,
+) -> String {
+    format!(
+        "{} - - [{}] \"{} {} {}\" {} {}",
+        remote_addr.ip(),
+        format_clf_time(),
+        method,
+        path,
+        protocol,
+        status,
+        size,
+    )
+}
+
+// ── Logging initialisation ────────────────────────────────────────
+
 /// Initialise the logging subsystem: spawns a background task that either
 /// counts requests for `--summary` mode or batches per-request details for
 /// the detailed mode. Returns the `LogMode` handle to pass to workers along
@@ -107,9 +175,6 @@ impl Drop for TimedBody {
 /// graceful shutdown.
 pub(crate) fn init_logging(
     summary_mode: bool,
-    max_path_len: usize,
-    max_size_digits: usize,
-    max_savings_digits: usize,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (LogMode, tokio::task::JoinHandle<()>) {
     if crate::config::DISABLE_LOGGING {
@@ -141,32 +206,16 @@ pub(crate) fn init_logging(
 
         (LogMode::Summary(counter), handle)
     } else {
-        let path_w = max_path_len.max(1);
-        let size_w = max_size_digits.max(1);
-        let save_w = max_savings_digits.max(1);
         let (tx, mut rx) =
-            mpsc::unbounded_channel::<(String, String, u16, u64, u64, u64, &'static str)>();
+            mpsc::unbounded_channel::<(SocketAddr, String, String, u16, u64, u64, &'static str)>();
 
         let handle = tokio::spawn(async move {
-            elog!(
-                "{:>2}  {:<7}  {:<path_w$}  {:>3}  {:>size_w$}  {:>save_w$}  {:>8}",
-                "PR",
-                "METHOD",
-                "PATH",
-                "STA",
-                "SIZE",
-                "SAVE",
-                "TIME",
-                path_w = path_w,
-                size_w = size_w,
-                save_w = save_w,
-            );
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.tick().await;
             // Pre-allocate batch vec with a reasonable capacity to avoid
             // repeated reallocations under load. Even if we over-allocate,
             // the vec is short-lived (dropped after each 1s interval).
-            let mut batch: Vec<(String, String, u16, u64, u64, u64, &'static str)> =
+            let mut batch: Vec<(SocketAddr, String, String, u16, u64, u64, &'static str)> =
                 Vec::with_capacity(1024);
             loop {
                 tokio::select! {
@@ -176,12 +225,10 @@ pub(crate) fn init_logging(
                             batch.push(entry);
                         }
 
-                        for (method, path, status, size, savings, us, protocol) in &batch {
+                        for (remote_addr, method, path, status, size, _elapsed_us, protocol) in &batch {
                             elog!(
-                                "{protocol:>2}  {method:<7}  {path:<path_w$}  {status:>3}  {size:>size_w$}B  {savings:>save_w$}%  {us:>8} \u{00b5}s",
-                                path_w = path_w,
-                                size_w = size_w,
-                                save_w = save_w,
+                                "{}",
+                                format_clf_entry(*remote_addr, method, path, protocol, *status, *size)
                             );
                         }
                     }
@@ -190,7 +237,7 @@ pub(crate) fn init_logging(
             }
         });
 
-        (LogMode::Detailed { tx, path_w, size_w, save_w }, handle)
+        (LogMode::Detailed { tx }, handle)
     }
 }
 
@@ -202,14 +249,13 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
             LogMode::Summary(counter) => {
                 counter.fetch_add(1, Ordering::Relaxed);
             }
-            LogMode::Detailed { tx, .. } => {
-                // protocol is &'static str — no allocation needed
+            LogMode::Detailed { tx } => {
                 let _ = tx.send((
+                    info.remote_addr,
                     info.method,
                     info.path,
                     info.status,
                     info.size,
-                    info.savings,
                     elapsed,
                     info.protocol,
                 ));
@@ -221,6 +267,7 @@ pub(crate) fn flush_log(log: &mut Option<TimingInfo>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -239,26 +286,19 @@ mod tests {
     }
 
     #[test]
-    fn log_mode_clone_detailed_shares_sender_and_preserves_widths() {
+    fn log_mode_clone_detailed_shares_sender() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let a = LogMode::Detailed {
-            tx,
-            path_w: 42,
-            size_w: 7,
-            save_w: 3,
-        };
+        let a = LogMode::Detailed { tx };
         let b = a.clone();
-        if let LogMode::Detailed { tx, path_w, size_w, save_w } = &b {
-            assert_eq!(*path_w, 42);
-            assert_eq!(*size_w, 7);
-            assert_eq!(*save_w, 3);
-            tx.send(("GET".into(), "/t".into(), 200, 100_u64, 70_u64, 30_u64, "h1"))
+        if let LogMode::Detailed { tx } = &b {
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 54321);
+            tx.send((addr, "GET".into(), "/t".into(), 200, 100_u64, 30_u64, "HTTP/1.1"))
                 .unwrap();
         }
         let msg = rx.try_recv().unwrap();
-        assert_eq!(msg.0, "GET");
-        assert_eq!(msg.1, "/t");
-        assert_eq!(msg.2, 200);
+        assert_eq!(msg.1, "GET");
+        assert_eq!(msg.2, "/t");
+        assert_eq!(msg.3, 200);
     }
 
     // ── flush_log: dispatches to summary or detailed logging ─────
@@ -266,14 +306,15 @@ mod tests {
     #[test]
     fn flush_log_summary_increments_counter_and_consumes_option() {
         let counter = Arc::new(AtomicU64::new(0));
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345);
         let info = TimingInfo {
             start: std::time::Instant::now(),
+            remote_addr: addr,
             method: "GET".into(),
             path: "/".into(),
             status: 200,
             size: 1024,
-            savings: 70,
-            protocol: "h1",
+            protocol: "HTTP/1.1",
             log_mode: LogMode::Summary(Arc::clone(&counter)),
         };
         let mut log = Some(info);
@@ -285,31 +326,27 @@ mod tests {
     #[test]
     fn flush_log_detailed_sends_on_channel() {
         let (tx, mut rx) = mpsc::unbounded_channel();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let info = TimingInfo {
             start: std::time::Instant::now(),
+            remote_addr: addr,
             method: "POST".into(),
             path: "/api".into(),
             status: 201,
             size: 512,
-            savings: 50,
-            protocol: "h2",
-            log_mode: LogMode::Detailed {
-                tx,
-                path_w: 10,
-                size_w: 5,
-                save_w: 3,
-            },
+            protocol: "HTTP/2.0",
+            log_mode: LogMode::Detailed { tx },
         };
         let mut log = Some(info);
         flush_log(&mut log);
         assert!(log.is_none());
 
         let msg = rx.try_recv().unwrap();
-        assert_eq!(msg.0, "POST");
-        assert_eq!(msg.1, "/api");
-        assert_eq!(msg.2, 201);
-        assert_eq!(msg.4, 50);
-        assert_eq!(msg.6, "h2");
+        assert_eq!(msg.0, addr);
+        assert_eq!(msg.1, "POST");
+        assert_eq!(msg.2, "/api");
+        assert_eq!(msg.3, 201);
+        assert_eq!(msg.6, "HTTP/2.0");
     }
 
     #[test]
@@ -317,5 +354,16 @@ mod tests {
         let mut log: Option<TimingInfo> = None;
         flush_log(&mut log);
         assert!(log.is_none());
+    }
+
+    // ── format_clf_entry ─────────────────────────────────────────
+
+    #[test]
+    fn clf_entry_has_expected_structure() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 54321);
+        // We can't test the exact timestamp, but we can test the surrounding format.
+        let entry = format_clf_entry(addr, "GET", "/index.html", "HTTP/1.1", 200, 1234);
+        assert!(entry.starts_with("127.0.0.1 - - ["));
+        assert!(entry.contains("] \"GET /index.html HTTP/1.1\" 200 1234"));
     }
 }

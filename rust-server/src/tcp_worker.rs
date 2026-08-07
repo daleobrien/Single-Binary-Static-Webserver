@@ -51,7 +51,7 @@ async fn handle_tcp_connection(
     // only `serve_connection` must be duplicated because the IO types differ.
     let svc = service_fn(move |req: Request<Incoming>| {
         let log_mode = log_mode.clone();
-        async move { handle_request(req, log_mode).await }
+        async move { handle_request(req, addr, log_mode).await }
     });
 
     // ── HTTP/2 tuning: larger flow-control windows eliminate

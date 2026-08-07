@@ -24,8 +24,6 @@ pub struct CodegenCtx {
     pub not_found_const_prefix: Option<String>,
     pub files: Vec<String>,
     pub has_404: bool,
-    pub max_path_len: usize,
-    pub max_size: usize,
     pub use_uncompressed: Vec<bool>,
     pub version_use_uncompressed: bool,
     pub uncompressed_lengths: Vec<usize>,
@@ -70,9 +68,6 @@ pub fn generate(ctx: &CodegenCtx) {
 
     // ── Routing function ──
     write_routing_function(&mut g, ctx);
-
-    // ── Column widths ──
-    write_column_widths(&mut g, ctx);
 
     println!("cargo:rerun-if-changed=../public/");
 }
@@ -446,30 +441,4 @@ fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    }}").unwrap();
     writeln!(g, "}}").unwrap();
     writeln!(g).unwrap();
-}
-
-fn write_column_widths(g: &mut fs::File, ctx: &CodegenCtx) {
-    let size_digits = if ctx.max_size == 0 {
-        1
-    } else {
-        (ctx.max_size.ilog10() as usize) + 1
-    };
-    writeln!(
-        g,
-        "/// Max URL path length across all assets (for column-aligned logging)."
-    )
-    .unwrap();
-    writeln!(g, "pub const MAX_PATH_LEN: usize = {};", ctx.max_path_len).unwrap();
-    writeln!(
-        g,
-        "/// Max content-length digit count across all assets (for column-aligned logging)."
-    )
-    .unwrap();
-    writeln!(g, "pub const MAX_SIZE_DIGITS: usize = {size_digits};").unwrap();
-    writeln!(
-        g,
-        "/// Max compression-savings percentage digit count (always 3 for 0–100%)."
-    )
-    .unwrap();
-    writeln!(g, "pub const MAX_SAVINGS_DIGITS: usize = 3;").unwrap();
 }

@@ -126,9 +126,10 @@ pub(crate) fn spawn_quic_workers(
                         tokio::task::spawn(async move {
                             match incoming.await {
                                 Ok(conn) => {
+                                    let remote_addr = conn.remote_address();
                                     let h3_conn = H3QuinnConnection::new(conn);
                                     if let Err(e) =
-                                        handle_h3_connection(h3_conn, log_mode).await
+                                        handle_h3_connection(h3_conn, remote_addr, log_mode).await
                                     {
                                         if !crate::error::is_client_cancel(&*e) {
                                             elog!("h3 connection error: {e}");

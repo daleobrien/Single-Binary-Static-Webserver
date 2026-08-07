@@ -13,7 +13,14 @@ if [ "${1:-}" = "--docker" ]; then
     docker run -p 3000:3000 --rm app-rust
 else
     pushd rust-server > /dev/null
-    cargo test && cargo build --release
+    # Run tests, show summary only; full output on failure
+    if TEST_OUTPUT=$(cargo test 2>&1); then
+        echo "$TEST_OUTPUT" | grep -E '(test result:|running )' || echo "✅ All tests passed."
+    else
+        echo "$TEST_OUTPUT"
+        exit 1
+    fi
+    cargo build --release
 
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
     BIN="$TARGET_DIR/release/app"

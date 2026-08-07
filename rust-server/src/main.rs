@@ -13,15 +13,18 @@ mod error;
 mod handlers;
 mod logging;
 mod quic_worker;
+mod response;
 mod shutdown;
 mod sockets;
 mod startup;
 mod tcp_worker;
 mod tls_stream;
+mod worker_config;
 
 use std::time::Duration;
 
-use config::{NUM_WORKERS, PORT, SHUTDOWN_TIMEOUT_SECS, WorkerConfig};
+use config::{NUM_WORKERS, PORT, SHUTDOWN_TIMEOUT_SECS};
+use worker_config::WorkerConfig;
 use logging::init_logging;
 use shutdown::wait_for_shutdown;
 

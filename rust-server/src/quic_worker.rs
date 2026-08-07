@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use h3_quinn::Connection as H3QuinnConnection;
 
-use crate::config::WorkerConfig;
+use crate::worker_config::WorkerConfig;
 use crate::handlers::handle_h3_connection;
 use crate::sockets::create_reuseport_udp_socket;
 

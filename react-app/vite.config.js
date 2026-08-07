@@ -8,7 +8,7 @@ function logOutputFiles() {
   return {
     name: 'log-output-files',
     closeBundle() {
-      const outDir = path.resolve(__dirname, '../public');
+      const outDir = path.resolve(import.meta.dirname, '../public');
       const totals = { raw: 0, gzip: 0 };
       console.log('\n📁 Complete output:');
       walkDir(outDir, '', totals);

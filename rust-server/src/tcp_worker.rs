@@ -12,8 +12,9 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::{
     H2_CONN_WINDOW, H2_MAX_FRAME_SIZE, H2_MAX_SEND_BUF, H2_STREAM_WINDOW, MAX_CONNECTIONS,
-    TCP_HANDLERS_PER_WORKER, TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig,
+    TCP_HANDLERS_PER_WORKER,
 };
+use crate::worker_config::{TLS_CONTENT_TYPE_HANDSHAKE, WorkerConfig};
 use crate::handlers::handle_request;
 use crate::logging::LogMode;
 use crate::sockets::create_reuseport_listener;

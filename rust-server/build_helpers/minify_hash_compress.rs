@@ -11,6 +11,8 @@ pub(super) fn minify_compute_sha_and_compress(
     files: &[String],
     gzip_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
+    original_lens: &mut HashMap<String, usize>,
+    gzip_lens: &mut HashMap<String, usize>,
 ) -> HashMap<String, String> {
     let mut file_hashes: HashMap<String, String> = HashMap::new();
 
@@ -24,6 +26,10 @@ pub(super) fn minify_compute_sha_and_compress(
         }
         let input_path = format!("../public/{file}");
         let raw = fs::read(&input_path).expect("failed to read source file");
+
+        // Track original (pre-minification) size.
+        original_lens.insert(file.clone(), raw.len());
+
         let minified = processing::minify_file(file, &raw);
 
         // Compute SHA-256 of the (uncompressed) body for the Digest header.
@@ -32,7 +38,9 @@ pub(super) fn minify_compute_sha_and_compress(
         // Track uncompressed length for later size comparison.
         uncompressed_lens.insert(file.clone(), minified.len());
 
-        utils::compress_to_gzip(&minified, &format!("{gzip_dir}/{file}.gz"));
+        let gz_len =
+            utils::compress_to_gzip(&minified, &format!("{gzip_dir}/{file}.gz"));
+        gzip_lens.insert(file.clone(), gz_len);
     }
 
     file_hashes

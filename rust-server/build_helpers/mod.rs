@@ -64,16 +64,28 @@ pub fn run() {
 
     // ── Two-pass file processing ──
     let mut uncompressed_lens: HashMap<String, usize> = HashMap::new();
-    let mut file_hashes =
-        minify_compute_sha_and_compress(&files, &gzip_dir, &mut uncompressed_lens);
+    let mut original_lens: HashMap<String, usize> = HashMap::new();
+    let mut gzip_lens: HashMap<String, usize> = HashMap::new();
+    let mut file_hashes = minify_compute_sha_and_compress(
+        &files,
+        &gzip_dir,
+        &mut uncompressed_lens,
+        &mut original_lens,
+        &mut gzip_lens,
+    );
     update_html_sri_and_inject_update_js(
         &files,
         &mut file_hashes,
         &version_script_tag,
         &gzip_dir,
         &mut uncompressed_lens,
+        &mut original_lens,
+        &mut gzip_lens,
         disable_sri,
     );
+
+    // ── Print build summary ──
+    print_build_summary(&files, &original_lens, &uncompressed_lens, &gzip_lens);
 
     // ── Security headers (CSP is built per-file in build_asset_metadata) ──
     let security_headers = build_non_csp_headers();
@@ -142,4 +154,98 @@ pub fn run() {
         version_uncompressed_len,
     };
     generate(&ctx);
+}
+
+/// Print a summary table of each processed file showing original size, minified
+/// size, gzip size, and overall compression ratio.
+fn print_build_summary(
+    files: &[String],
+    original_lens: &HashMap<String, usize>,
+    uncompressed_lens: &HashMap<String, usize>,
+    gzip_lens: &HashMap<String, usize>,
+) {
+    let mut entries: Vec<(&String, usize, usize, usize)> = files
+        .iter()
+        .filter_map(|f| {
+            let orig = *original_lens.get(f)?;
+            let uncomp = *uncompressed_lens.get(f)?;
+            let gz = *gzip_lens.get(f)?;
+            Some((f, orig, uncomp, gz))
+        })
+        .collect();
+
+    if entries.is_empty() {
+        return;
+    }
+
+    // Sort by original size descending for readability.
+    entries.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Compute totals.
+    let total_orig: usize = entries.iter().map(|e| e.1).sum();
+    let total_gz: usize = entries.iter().map(|e| e.3).sum();
+
+    println!("\n========== Build Summary ==========");
+    println!(
+        "{:<40} {:>10} {:>10} {:>10} {:>10}",
+        "File", "Original", "Minified", "Gzip", "Ratio"
+    );
+    println!("{:-<85}", "");
+
+    for (file, orig, uncomp, gz) in &entries {
+        let ratio = if *orig > 0 {
+            (*gz as f64 / *orig as f64) * 100.0
+        } else {
+            100.0
+        };
+        println!(
+            "{:<40} {:>10} {:>10} {:>10} {:>9.1}%",
+            truncate_str(file, 40),
+            format_bytes(*orig),
+            format_bytes(*uncomp),
+            format_bytes(*gz),
+            ratio
+        );
+    }
+
+    println!("{:-<85}", "");
+    let overall_ratio = if total_orig > 0 {
+        (total_gz as f64 / total_orig as f64) * 100.0
+    } else {
+        100.0
+    };
+    println!(
+        "{:<40} {:>10} {:>10} {:>10} {:>9.1}%",
+        "TOTAL",
+        format_bytes(total_orig),
+        "",
+        format_bytes(total_gz),
+        overall_ratio
+    );
+    println!("====================================\n");
+}
+
+/// Format a byte count as a human-readable string (e.g. "1.2 KB").
+fn format_bytes(bytes: usize) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit_idx])
+    }
+}
+
+/// Truncate a string to `max_len` characters, appending "…" if truncated.
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len - 1])
+    }
 }

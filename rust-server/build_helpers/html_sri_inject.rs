@@ -13,6 +13,8 @@ pub(super) fn update_html_sri_and_inject_update_js(
     version_script_tag: &str,
     gzip_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
+    original_lens: &mut HashMap<String, usize>,
+    gzip_lens: &mut HashMap<String, usize>,
     disable_sri: bool,
 ) {
     for file in files {
@@ -21,6 +23,10 @@ pub(super) fn update_html_sri_and_inject_update_js(
         }
         let input_path = format!("../public/{file}");
         let mut raw = fs::read(&input_path).expect("failed to read source file");
+
+        // Track original (pre-injection / pre-minification) size.
+        original_lens.insert(file.clone(), raw.len());
+
         let mut raw_str = String::from_utf8_lossy(&raw).to_string();
 
         // Inject the pre-minified, pre-hashed version-check script before </body>.
@@ -58,6 +64,8 @@ pub(super) fn update_html_sri_and_inject_update_js(
         // Track uncompressed length for later size comparison.
         uncompressed_lens.insert(file.clone(), minified.len());
 
-        utils::compress_to_gzip(&minified, &format!("{gzip_dir}/{file}.gz"));
+        let gz_len =
+            utils::compress_to_gzip(&minified, &format!("{gzip_dir}/{file}.gz"));
+        gzip_lens.insert(file.clone(), gz_len);
     }
 }

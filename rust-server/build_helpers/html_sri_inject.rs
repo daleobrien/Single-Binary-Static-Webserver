@@ -5,12 +5,11 @@ use std::path::Path;
 use crate::build_helpers::processing;
 use crate::build_helpers::utils;
 
-/// Process HTML: inject the version-check script, replace JS/CSS filenames with
-/// content-hashed versions plus SRI integrity attributes, then minify and gzip.
+/// Process HTML: inject the version-check script, add SRI integrity attributes
+/// to <link>/<script>/<img> tags (keeping original filenames), then minify and gzip.
 pub(super) fn update_html_sri_and_inject_update_js(
     files: &[String],
     file_hashes: &mut HashMap<String, String>,
-    hashed_filenames: &HashMap<String, String>,
     version_script_tag: &str,
     gzip_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
@@ -32,21 +31,17 @@ pub(super) fn update_html_sri_and_inject_update_js(
             raw_str = injected;
         }
 
-        // Replace original filenames with content-hashed versions and
-        // inject integrity="sha256-…" crossorigin="anonymous" on <link>/<script>/<img> tags.
+        // Inject integrity="sha256-…" crossorigin="anonymous" on <link>/<script>/<img> tags.
+        // Filenames are kept as-is (no content-hash renaming).
         // Try both href (for <link>) and src (for <script>/<img>) — only the one
         // present in the HTML will match.
-        // When SRI is disabled, skip this step entirely — original filenames are used as-is.
+        // When SRI is disabled, skip this step entirely.
         if !disable_sri {
             for (asset_file, hash) in file_hashes.iter() {
-                let hashed_name = hashed_filenames
-                    .get(asset_file)
-                    .map(|s| s.as_str())
-                    .unwrap_or(asset_file);
                 for attr in &["href", "src"] {
                     let pattern = format!("{attr}=\"/{asset_file}\"");
                     let replacement =
-                        format!("{attr}=\"/{hashed_name}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"");
+                        format!("{attr}=\"/{asset_file}\" integrity=\"sha256-{hash}\" crossorigin=\"anonymous\"");
                     raw_str = raw_str.replace(&pattern, &replacement);
                 }
             }

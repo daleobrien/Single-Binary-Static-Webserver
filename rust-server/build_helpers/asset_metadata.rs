@@ -11,7 +11,6 @@ pub(super) fn build_asset_metadata(
     security_headers: &[(String, String)],
     file_hashes: &HashMap<String, String>,
     csp_values: &csp::CspValues,
-    hashed_filenames: &HashMap<String, String>,
     uncompressed_lens: &HashMap<String, usize>,
     build_version: &str,
     not_found_filename: &str,
@@ -40,12 +39,7 @@ pub(super) fn build_asset_metadata(
     for file in files {
         let content_type = utils::mime_for_file(file);
         let const_prefix = utils::file_to_const(file);
-        // Use the content-hashed filename for URL paths when available.
-        let url_file = hashed_filenames
-            .get(file)
-            .map(|s| s.as_str())
-            .unwrap_or(file);
-        let url_paths = utils::url_paths_for_file(url_file);
+        let url_paths = utils::url_paths_for_file(file);
 
         for path in &url_paths {
             max_path_len = max_path_len.max(path.len());

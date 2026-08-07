@@ -429,7 +429,6 @@ fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
         "/// - `/about`     → about.html  (extensionless ⇒ .html)"
     )
     .unwrap();
-    writeln!(g, "/// - `/script.abc123.js` → script.js  (content-hashed)").unwrap();
     writeln!(g, "/// Falls back to the embedded 404 page on no match.").unwrap();
     writeln!(g, "pub fn route(path: &str) -> &'static Asset {{").unwrap();
     writeln!(g, "    match path {{").unwrap();

@@ -58,12 +58,11 @@ pub fn run() {
 
     // ── Two-pass file processing ──
     let mut uncompressed_lens: HashMap<String, usize> = HashMap::new();
-    let (mut file_hashes, hashed_filenames) =
-        minify_compute_sha_and_compress(&files, &gzip_dir, &mut uncompressed_lens, disable_sri);
+    let mut file_hashes =
+        minify_compute_sha_and_compress(&files, &gzip_dir, &mut uncompressed_lens);
     update_html_sri_and_inject_update_js(
         &files,
         &mut file_hashes,
-        &hashed_filenames,
         &version_script_tag,
         &gzip_dir,
         &mut uncompressed_lens,
@@ -98,7 +97,6 @@ pub fn run() {
         &security_headers,
         &file_hashes,
         &csp_values,
-        &hashed_filenames,
         &uncompressed_lens,
         &build_version,
         not_found_filename,

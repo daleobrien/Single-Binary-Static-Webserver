@@ -110,6 +110,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// Create a content-hashed filename like `script.a8f2c3d.js`.
 /// `hex_hash` is the full hex SHA-256 digest; we take the first 8 characters.
 /// Preserves any directory prefix (e.g. `images/icon.svg` → `images/icon.a8f2c3d.svg`).
+#[allow(dead_code)]
 pub fn hashed_filename(filename: &str, hex_hash: &str) -> String {
     let short_hash = &hex_hash[..8.min(hex_hash.len())];
     let path = Path::new(filename);

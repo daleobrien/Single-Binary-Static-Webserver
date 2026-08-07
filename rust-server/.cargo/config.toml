@@ -1,5 +1,0 @@
-# Allow runtime-injected <style> tags (e.g. useDynamicStyles hook)
-# by adding 'unsafe-inline' to the CSP style-src directive.
-[env]
-#ALLOW_INLINE_STYLES = "1"
-#DISABLE_LOGGING = "false"

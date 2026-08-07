@@ -44,12 +44,13 @@ pub(super) fn build_csp_values(
     let font_hashes = collect_hashes(file_hashes, &[".woff", ".woff2", ".ttf", ".otf"]);
     let media_hashes = collect_hashes(file_hashes, &[".mp3", ".mp4", ".webm", ".ogg", ".wav"]);
 
-    // style-src: allow 'unsafe-inline' only when explicitly opted in
-    // (e.g. for React packages that inject CSS dynamically at runtime).
-    let style_base = if allow_inline_styles {
-        "'self' 'unsafe-inline'"
+    // style-src: when 'unsafe-inline' is present (opted in for packages that
+    // inject CSS dynamically at runtime), CSP hashes are redundant —
+    // 'unsafe-inline' allows all inline styles regardless. Skip hashes.
+    let style_src = if allow_inline_styles {
+        "'self' 'unsafe-inline'".to_string()
     } else {
-        "'self'"
+        join_value("'self'", &css_hashes)
     };
 
     CspValues {
@@ -58,7 +59,7 @@ pub(super) fn build_csp_values(
             parts.extend(js_hashes);
             parts.join(" ")
         },
-        style_src: join_value(style_base, &css_hashes),
+        style_src,
         img_src: join_value("'self'", &img_hashes),
         font_src: join_value("'self'", &font_hashes),
         media_src: join_value("'self'", &media_hashes),
@@ -281,9 +282,10 @@ mod tests {
         assert_eq!(v.font_src, "'self'");
         assert_eq!(v.media_src, "'self'");
 
-        // With ALLOW_INLINE_STYLES
+        // With ALLOW_INLINE_STYLES: hashes are redundant when 'unsafe-inline'
+        // is present, so only 'self' and 'unsafe-inline' are emitted.
         let v2 = build_csp_values(&map, "scripthash", false, true);
-        assert_eq!(v2.style_src, "'self' 'unsafe-inline' 'sha256-css789'");
+        assert_eq!(v2.style_src, "'self' 'unsafe-inline'");
     }
 
     #[test]

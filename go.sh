@@ -11,6 +11,9 @@ if [ "${1:-}" = "--docker" ]; then
     docker run -p 3000:3000 --rm app-rust
 else
     pushd rust-server > /dev/null
+
+    export ALLOW_INLINE_STYLES=1
+
     cargo test && cargo build --release
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
     BIN="$TARGET_DIR/release/app"

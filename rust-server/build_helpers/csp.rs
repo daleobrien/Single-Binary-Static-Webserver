@@ -122,6 +122,7 @@ fn build_csp_for_source(source: &str, values: &CspValues) -> String {
 
     // Always-present directives
     directives.push("connect-src 'self'".into());
+    directives.push("manifest-src 'self'".into());
     directives.push("object-src 'none'".into());
     directives.push("base-uri 'self'".into());
     directives.push("form-action 'self'".into());
@@ -342,6 +343,7 @@ mod tests {
         assert_eq!(directive(&csp, "frame-src"), "'none'");
         // Always-present
         assert_eq!(directive(&csp, "connect-src"), "'self'");
+        assert_eq!(directive(&csp, "manifest-src"), "'self'");
         assert_eq!(directive(&csp, "object-src"), "'none'");
         assert_eq!(directive(&csp, "base-uri"), "'self'");
         assert_eq!(directive(&csp, "form-action"), "'self'");

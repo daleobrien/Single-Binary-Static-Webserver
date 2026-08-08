@@ -4,6 +4,7 @@ use std::path::Path;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use brotli::enc::BrotliEncoderParams;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use sha2::{Digest, Sha256};
@@ -141,6 +142,24 @@ pub fn compress_to_gzip(data: &[u8], path: &str) -> usize {
     // Also write the uncompressed version for size comparison.
     let raw_path = format!("{path}.raw");
     fs::write(&raw_path, data).expect("failed to write raw file");
+    compressed_len
+}
+
+/// Brotli-compress `data` at the highest compression level (level 11).
+/// Writes the compressed output to `path`.
+/// Returns the size of the compressed output.
+pub fn compress_to_brotli(data: &[u8], path: &str) -> usize {
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent).expect("failed to create brotli parent directory");
+    }
+    let params = BrotliEncoderParams {
+        quality: 11,
+        ..Default::default()
+    };
+    let mut out = Vec::with_capacity(data.len());
+    brotli::BrotliCompress(&mut &data[..], &mut out, &params).expect("brotli compress failed");
+    let compressed_len = out.len();
+    fs::write(path, &out).expect("failed to write brotli file");
     compressed_len
 }
 
@@ -326,6 +345,27 @@ mod tests {
 
         let gz = fs::read(&gz_path).unwrap();
         assert_eq!(&gz[..2], &[0x1F, 0x8B]); // gzip magic bytes
+    }
+
+    // ── compress_to_brotli: valid output, decompressible ──────────
+
+    #[test]
+    fn compress_to_brotli_produces_valid_output() {
+        let dir = tempdir().unwrap();
+        let br_path = dir.path().join("test.br").to_str().unwrap().to_string();
+
+        let data = b"Hello, world! Test data for brotli compression.";
+        let len = compress_to_brotli(data, &br_path);
+
+        assert!(len > 0);
+        assert!(len < data.len()); // should compress
+
+        let br_data = fs::read(&br_path).unwrap();
+        // Decompress and verify round-trip
+        let mut decompressed = Vec::new();
+        brotli::BrotliDecompress(&mut &br_data[..], &mut decompressed)
+            .expect("brotli decompress failed");
+        assert_eq!(decompressed, data);
     }
 
     // ── escape_byte_string: safe byte→string for codegen ─────────

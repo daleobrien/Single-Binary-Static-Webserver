@@ -14,6 +14,7 @@ pub struct AssetGen {
 pub struct CodegenCtx {
     pub out_dir: String,
     pub gzip_dir: String,
+    pub br_dir: String,
     pub build_version: String,
     pub assets: Vec<AssetGen>,
     pub asset_header_indices: Vec<usize>,
@@ -25,7 +26,9 @@ pub struct CodegenCtx {
     pub files: Vec<String>,
     pub has_404: bool,
     pub use_uncompressed: Vec<bool>,
+    pub use_brotli: Vec<bool>,
     pub version_use_uncompressed: bool,
+    pub version_use_brotli: bool,
     pub uncompressed_lengths: Vec<usize>,
     pub version_uncompressed_len: usize,
 }
@@ -183,11 +186,17 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
     for (i, file) in ctx.files.iter().enumerate() {
         let suffix = if ctx.use_uncompressed[i] {
             ".gz.raw"
+        } else if ctx.use_brotli[i] {
+            ".br"
         } else {
             ".gz"
         };
         let embed_name = format!("{file}{suffix}");
-        let embed_path = format!("{}/{}", ctx.gzip_dir, embed_name);
+        let embed_path = if ctx.use_brotli[i] {
+            format!("{}/{}", ctx.br_dir, embed_name)
+        } else {
+            format!("{}/{}", ctx.gzip_dir, embed_name)
+        };
         let content_length = fs::metadata(&embed_path)
             .expect("failed to stat body file")
             .len() as usize;
@@ -205,9 +214,10 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
             "// ── {file} ──────────────────────────────────────────────"
         )
         .unwrap();
+        let include_dir = if ctx.use_brotli[i] { "brotli" } else { "gzip" };
         writeln!(
             g,
-            "const {const_prefix}_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{embed_name}\"));"
+            "const {const_prefix}_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{include_dir}/{embed_name}\"));"
         )
         .unwrap();
         writeln!(g, "const {const_prefix}_LEN: usize = {content_length};").unwrap();
@@ -226,9 +236,12 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
 fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     let embed_name = if ctx.version_use_uncompressed {
         "v.txt.gz.raw"
+    } else if ctx.version_use_brotli {
+        "v.txt.br"
     } else {
         "v.txt.gz"
     };
+    let include_dir = if ctx.version_use_brotli { "brotli" } else { "gzip" };
     writeln!(
         g,
         "// ── /version (build fingerprint) ────────────────────────"
@@ -236,7 +249,7 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     .unwrap();
     writeln!(
         g,
-        "const VERSION_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{embed_name}\"));"
+        "const VERSION_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{include_dir}/{embed_name}\"));"
     )
     .unwrap();
     writeln!(g, "const VERSION_LEN: usize = {};", ctx.version_len).unwrap();

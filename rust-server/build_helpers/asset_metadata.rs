@@ -8,6 +8,7 @@ use crate::build_helpers::utils;
 pub(super) fn build_asset_metadata(
     files: &[String],
     gzip_dir: &str,
+    br_dir: &str,
     security_headers: &[(String, String)],
     file_hashes: &HashMap<String, String>,
     csp_values: &csp::CspValues,
@@ -22,6 +23,7 @@ pub(super) fn build_asset_metadata(
     usize,
     bool,
     Vec<bool>,
+    Vec<bool>,
     Option<String>,
     Vec<usize>,
 ) {
@@ -30,6 +32,7 @@ pub(super) fn build_asset_metadata(
     let mut assets: Vec<AssetGen> = Vec::new();
     let mut asset_header_indices: Vec<usize> = Vec::new();
     let mut use_uncompressed: Vec<bool> = Vec::new();
+    let mut use_brotli: Vec<bool> = Vec::new();
     let mut has_404 = false;
     let mut not_found_const_prefix: Option<String> = None;
     let mut max_path_len: usize = 0;
@@ -56,18 +59,27 @@ pub(super) fn build_asset_metadata(
         let gz_name = format!("{file}.gz");
         let gz_path = format!("{gzip_dir}/{gz_name}");
         let gz_data = fs::read(&gz_path).expect("failed to read gzipped file");
+        let br_name = format!("{file}.br");
+        let br_path = format!("{br_dir}/{br_name}");
+        let br_data = fs::read(&br_path).expect("failed to read brotli file");
         let uncompressed_len = uncompressed_lens
             .get(file)
             .copied()
             .unwrap_or(gz_data.len());
-        let use_uncomp = uncompressed_len < gz_data.len();
+        // Choose the smallest among uncompressed, gzip, and brotli.
+        let use_uncomp = uncompressed_len < gz_data.len() && uncompressed_len < br_data.len();
+        let use_br = !use_uncomp && br_data.len() < gz_data.len();
         use_uncompressed.push(use_uncomp);
+        use_brotli.push(use_br);
 
         let (body_data, content_length) = if use_uncomp {
             let raw_path = format!("{gz_path}.raw");
             let raw_data = fs::read(&raw_path).expect("failed to read raw file");
             let len = raw_data.len();
             (raw_data, len)
+        } else if use_br {
+            let len = br_data.len();
+            (br_data, len)
         } else {
             let len = gz_data.len();
             (gz_data, len)
@@ -81,7 +93,9 @@ pub(super) fn build_asset_metadata(
         // Build header set for this asset
         let mut headers: Vec<(String, String)> = Vec::new();
         headers.push(("content-type".into(), content_type.into()));
-        if !use_uncomp {
+        if use_br {
+            headers.push(("content-encoding".into(), "br".into()));
+        } else if !use_uncomp {
             headers.push(("content-encoding".into(), "gzip".into()));
         }
         headers.push(("content-security-policy".into(), csp_value));
@@ -134,6 +148,7 @@ pub(super) fn build_asset_metadata(
         max_size,
         has_404,
         use_uncompressed,
+        use_brotli,
         not_found_const_prefix,
         uncompressed_lengths,
     )

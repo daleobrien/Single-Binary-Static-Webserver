@@ -6,22 +6,32 @@ use crate::build_helpers::utils;
 pub(super) fn build_version_headers(
     build_version: &str,
     gzip_dir: &str,
+    br_dir: &str,
     mut header_sets: Vec<Vec<(String, String)>>,
-) -> (usize, usize, bool, Vec<Vec<(String, String)>>, usize) {
+) -> (usize, usize, bool, bool, Vec<Vec<(String, String)>>, usize) {
     let version_body = build_version.as_bytes().to_vec();
     let version_gz_path = format!("{gzip_dir}/v.txt.gz");
     utils::compress_to_gzip(&version_body, &version_gz_path);
+    let version_br_path = format!("{br_dir}/v.txt.br");
+    utils::compress_to_brotli(&version_body, &version_br_path);
     let version_gz_data = fs::read(&version_gz_path).expect("failed to read version gzip");
-    let version_use_uncomp = version_body.len() < version_gz_data.len();
+    let version_br_data = fs::read(&version_br_path).expect("failed to read version brotli");
+    let version_use_uncomp = version_body.len() < version_gz_data.len()
+        && version_body.len() < version_br_data.len();
+    let version_use_brotli = !version_use_uncomp && version_br_data.len() < version_gz_data.len();
     let version_len = if version_use_uncomp {
         version_body.len()
+    } else if version_use_brotli {
+        version_br_data.len()
     } else {
         version_gz_data.len()
     };
 
     let mut version_headers: Vec<(String, String)> = Vec::new();
     version_headers.push(("content-type".into(), "text/plain; charset=utf-8".into()));
-    if !version_use_uncomp {
+    if version_use_brotli {
+        version_headers.push(("content-encoding".into(), "br".into()));
+    } else if !version_use_uncomp {
         version_headers.push(("content-encoding".into(), "gzip".into()));
     }
     version_headers.push((
@@ -34,6 +44,8 @@ pub(super) fn build_version_headers(
     // Content-Digest: SHA-256 of the body actually sent
     let content_digest_data = if version_use_uncomp {
         &version_body
+    } else if version_use_brotli {
+        &version_br_data
     } else {
         &version_gz_data
     };
@@ -61,6 +73,7 @@ pub(super) fn build_version_headers(
         version_header_idx,
         version_len,
         version_use_uncomp,
+        version_use_brotli,
         header_sets,
         version_body.len(),
     )

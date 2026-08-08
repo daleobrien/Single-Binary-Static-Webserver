@@ -27,17 +27,23 @@ pub fn generate(out_dir: &str) {
     let max_connections: usize = env::var("MAX_CONNS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(4096);
+        .unwrap_or(1024);
 
+    // A fixed-size handler pool trades memory for per-connection spawn
+    // overhead. For a static file server the throughput gain from 512+
+    // handlers is negligible; the floor of 64 alone was 8x what most
+    // deployments need. We cap at 64 per worker (at most 8x64=512 tasks
+    // total across the server) and floor at 8 to keep concurrency
+    // reasonable on single-worker setups.
     let tcp_handlers_per_worker: usize = env::var("TCP_HANDLERS_PER_WORKER")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| (max_connections / num_workers).max(64));
+        .unwrap_or_else(|| (max_connections / num_workers).max(8).min(64));
 
     let h3_handlers_per_connection: usize = env::var("H3_HANDLERS_PER_CONNECTION")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8);
+        .unwrap_or(4);
 
     let shutdown_timeout: u64 = env::var("SHUTDOWN_TIMEOUT_SECS")
         .ok()
@@ -143,22 +149,22 @@ pub fn generate(out_dir: &str) {
     let h2_conn_window: u32 = env::var("H2_CONN_WINDOW")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(16 * 1024 * 1024);
+        .unwrap_or(1 * 1024 * 1024);
 
     let h2_stream_window: u32 = env::var("H2_STREAM_WINDOW")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(4 * 1024 * 1024);
+        .unwrap_or(1 * 1024 * 1024);
 
     let h2_max_frame_size: u32 = env::var("H2_MAX_FRAME_SIZE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(65_535);
+        .unwrap_or(16_384);
 
     let h2_max_send_buf: usize = env::var("H2_MAX_SEND_BUF")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(256 * 1024);
+        .unwrap_or(64 * 1024);
 
     writeln!(
         f,
@@ -235,14 +241,17 @@ pub fn generate(out_dir: &str) {
     writeln!(f, "pub(crate) const DISABLE_LOGGING: bool = {disable_logging};").unwrap();
     writeln!(f).unwrap();
 
+    // QUIC/HTTP3 adds substantial baseline RAM (~4-8 MB) from endpoint
+    // configs, crypto material clones, and per-connection handler pools.
+    // Static file servers rarely need it — disable by default.
     let disable_http3: bool = env::var("DISABLE_HTTP3")
         .ok()
         .map(|s| s == "1" || s.to_lowercase() == "true")
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     writeln!(
         f,
-        "/// Disable HTTP/3 (QUIC) support — set via DISABLE_HTTP3 at build time (default: false)."
+        "/// Disable HTTP/3 (QUIC) support — set via DISABLE_HTTP3 at build time (default: true)."
     )
     .unwrap();
     writeln!(

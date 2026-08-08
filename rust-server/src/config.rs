@@ -79,9 +79,9 @@ mod tests {
     // ── MAX_CONNS ─────────────────────────────────────────────────
 
     #[test]
-    fn max_connections_default_is_4096() {
+    fn max_connections_default_is_1024() {
         if option_env!("MAX_CONNS").is_none() {
-            assert_eq!(MAX_CONNECTIONS, 4096);
+            assert_eq!(MAX_CONNECTIONS, 1024);
         }
     }
 
@@ -99,9 +99,9 @@ mod tests {
     #[test]
     fn tcp_handlers_per_worker_default_is_formula() {
         if option_env!("TCP_HANDLERS_PER_WORKER").is_none() {
-            let expected = (MAX_CONNECTIONS / NUM_WORKERS).max(64);
+            let expected = (MAX_CONNECTIONS / NUM_WORKERS).max(8).min(64);
             assert_eq!(TCP_HANDLERS_PER_WORKER, expected,
-                "TCP_HANDLERS_PER_WORKER should be max(MAX_CONNECTIONS / NUM_WORKERS, 64)");
+                "TCP_HANDLERS_PER_WORKER should be max(MAX_CONNECTIONS / NUM_WORKERS, 8).min(64)");
         }
     }
 
@@ -119,9 +119,9 @@ mod tests {
 
     #[cfg(not(disable_http3))]
     #[test]
-    fn h3_handlers_per_connection_default_is_8() {
+    fn h3_handlers_per_connection_default_is_4() {
         if option_env!("H3_HANDLERS_PER_CONNECTION").is_none() {
-            assert_eq!(H3_HANDLERS_PER_CONNECTION, 8);
+            assert_eq!(H3_HANDLERS_PER_CONNECTION, 4);
         }
     }
 
@@ -158,9 +158,9 @@ mod tests {
     // ── H2_CONN_WINDOW ────────────────────────────────────────────
 
     #[test]
-    fn h2_conn_window_default_is_16_mib() {
+    fn h2_conn_window_default_is_1_mib() {
         if option_env!("H2_CONN_WINDOW").is_none() {
-            assert_eq!(H2_CONN_WINDOW, 16 * 1024 * 1024);
+            assert_eq!(H2_CONN_WINDOW, 1 * 1024 * 1024);
         }
     }
 
@@ -176,9 +176,9 @@ mod tests {
     // ── H2_STREAM_WINDOW ──────────────────────────────────────────
 
     #[test]
-    fn h2_stream_window_default_is_4_mib() {
+    fn h2_stream_window_default_is_1_mib() {
         if option_env!("H2_STREAM_WINDOW").is_none() {
-            assert_eq!(H2_STREAM_WINDOW, 4 * 1024 * 1024);
+            assert_eq!(H2_STREAM_WINDOW, 1 * 1024 * 1024);
         }
     }
 
@@ -194,9 +194,9 @@ mod tests {
     // ── H2_MAX_FRAME_SIZE ─────────────────────────────────────────
 
     #[test]
-    fn h2_max_frame_size_default_is_65535() {
+    fn h2_max_frame_size_default_is_16384() {
         if option_env!("H2_MAX_FRAME_SIZE").is_none() {
-            assert_eq!(H2_MAX_FRAME_SIZE, 65_535);
+            assert_eq!(H2_MAX_FRAME_SIZE, 16_384);
         }
     }
 
@@ -212,9 +212,9 @@ mod tests {
     // ── H2_MAX_SEND_BUF ───────────────────────────────────────────
 
     #[test]
-    fn h2_max_send_buf_default_is_256_kib() {
+    fn h2_max_send_buf_default_is_64_kib() {
         if option_env!("H2_MAX_SEND_BUF").is_none() {
-            assert_eq!(H2_MAX_SEND_BUF, 256 * 1024);
+            assert_eq!(H2_MAX_SEND_BUF, 64 * 1024);
         }
     }
 
@@ -248,9 +248,9 @@ mod tests {
     // ── DISABLE_HTTP3 ─────────────────────────────────────────────
 
     #[test]
-    fn disable_http3_default_is_false() {
+    fn disable_http3_default_is_true() {
         if option_env!("DISABLE_HTTP3").is_none() {
-            assert!(!DISABLE_HTTP3);
+            assert!(DISABLE_HTTP3);
         }
     }
 

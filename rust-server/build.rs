@@ -32,7 +32,7 @@ fn main() {
     let disable_http3: bool = std::env::var("DISABLE_HTTP3")
         .ok()
         .map(|s| s == "1" || s.to_lowercase() == "true")
-        .unwrap_or(false);
+        .unwrap_or(true);
     if disable_http3 {
         println!("cargo:rustc-cfg=disable_http3");
     }

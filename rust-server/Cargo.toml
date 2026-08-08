@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT"
 
 [features]
-default = ["http3"]
+default = []
 http3 = ["dep:quinn", "dep:h3", "dep:h3-quinn"]
 
 [dependencies]

@@ -32,6 +32,7 @@ ENV ALLOW_INLINE_STYLES=true
 ENV EMBED_ZSTD=false
 ENV EMBED_GZIP=false
 ENV DISABLE_HTTP3=true
+ENV MAX_CONNECTIONS=512
 
 RUN RUST_TARGET=$(cat /rust_target) && \
     cargo build --release --target "$RUST_TARGET" && \

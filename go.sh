@@ -22,6 +22,7 @@ else
     fi
     export DISABLE_LOGGING=false
     export NOT_FOUND_FILENAME=index.html
+    export ALLOW_INLINE_STYLES=true
     cargo build --release
 
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')

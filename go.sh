@@ -14,6 +14,9 @@ if [ "${1:-}" = "--docker" ]; then
 elif [ "${1:-}" = "--node" ]; then
     docker build -f "node-server/Dockerfile" -t app-node .
     docker run -p 3000:3000 --rm app-node
+elif [ "${1:-}" = "--nginx" ]; then
+    docker build -f "nginx-server/Dockerfile" -t app-nginx .
+    docker run -p 3000:3000 --rm app-nginx
 else
     pushd rust-server > /dev/null
     # Run tests, show summary only; full output on failure

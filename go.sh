@@ -29,6 +29,11 @@ else
     export DISABLE_LOGGING=false
     export NOT_FOUND_FILENAME=index.html
     export ALLOW_INLINE_STYLES=true
+    export EMBED_ZSTD=false
+    export EMBED_GZIP=false
+    export DISABLE_HTTP3=true
+    export MAX_CONNECTIONS=512
+
     cargo build --release
 
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')

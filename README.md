@@ -215,7 +215,7 @@ The version check uses `If-None-Match` for efficient 304 responses when the vers
 
 | Runtime | RAM (MB)  | Image Size (MB) | Index load (ms) |
 | :--- | ---: | ---: | ---: |
-| Rust-server |  36 | 1.46 | 2 |
+| Rust-server |  8 | 1.46 | 2 |
 | Nginx-server |   15 | 13.4 | 4 |
 | Node-server  | 282 | 307 | 10 |
 

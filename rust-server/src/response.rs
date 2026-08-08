@@ -2,6 +2,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 
 use crate::Asset;
+use crate::{EMBED_BROTLI, EMBED_GZIP, EMBED_ZSTD};
 
 /// Supported content encodings for runtime `Accept-Encoding` negotiation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,17 +63,27 @@ pub(crate) fn parse_accept_encoding(header_value: Option<&hyper::header::HeaderV
 
         // Map the encoding name, with a preference score for tie-breaking:
         // brotli(3) > zstd(2) > gzip(1) > identity(0).
+        // Disabled encodings (EMBED_*=false) are filtered out here.
         let candidate: Option<(ContentEncoding, f32, u8)> = match name {
-            "br" => Some((ContentEncoding::Brotli, q, 3)),
-            "zstd" => Some((ContentEncoding::Zstd, q, 2)),
-            "gzip" | "x-gzip" => Some((ContentEncoding::Gzip, q, 1)),
+            "br" if EMBED_BROTLI => Some((ContentEncoding::Brotli, q, 3)),
+            "zstd" if EMBED_ZSTD => Some((ContentEncoding::Zstd, q, 2)),
+            "gzip" | "x-gzip" if EMBED_GZIP => Some((ContentEncoding::Gzip, q, 1)),
             "identity" => Some((ContentEncoding::Identity, q, 0)),
             "*" => {
                 // Wildcard matches all — use the best we have at q.
-                if q > best_q || (q == best_q && 3 > best_pref) {
-                    best_encoding = ContentEncoding::Brotli;
+                let (best_enc, best_pref_candidate) = if EMBED_BROTLI {
+                    (ContentEncoding::Brotli, 3)
+                } else if EMBED_ZSTD {
+                    (ContentEncoding::Zstd, 2)
+                } else if EMBED_GZIP {
+                    (ContentEncoding::Gzip, 1)
+                } else {
+                    (ContentEncoding::Identity, 0)
+                };
+                if q > best_q || (q == best_q && best_pref_candidate > best_pref) {
+                    best_encoding = best_enc;
                     best_q = q;
-                    best_pref = 3;
+                    best_pref = best_pref_candidate;
                 }
                 continue;
             }

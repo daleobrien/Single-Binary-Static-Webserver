@@ -72,6 +72,20 @@ pub fn run() {
         .map(|s| s == "1" || s.to_lowercase() == "true")
         .unwrap_or(false);
 
+    // ── Read encoding embedding flags ──
+    let embed_gzip: bool = std::env::var("EMBED_GZIP")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(true);
+    let embed_brotli: bool = std::env::var("EMBED_BROTLI")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(true);
+    let embed_zstd: bool = std::env::var("EMBED_ZSTD")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(true);
+
     // ── Two-pass file processing ──
     let mut uncompressed_lens: HashMap<String, usize> = HashMap::new();
     let mut original_lens: HashMap<String, usize> = HashMap::new();
@@ -179,6 +193,9 @@ pub fn run() {
         version_gzip_len,
         version_brotli_len,
         version_zstd_len,
+        embed_gzip,
+        embed_brotli,
+        embed_zstd,
     };
     generate(&ctx);
 }

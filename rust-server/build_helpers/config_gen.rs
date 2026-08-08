@@ -153,7 +153,7 @@ pub fn generate(out_dir: &str) {
     let h2_max_send_buf: usize = env::var("H2_MAX_SEND_BUF")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1024 * 1024);
+        .unwrap_or(256 * 1024);
 
     writeln!(
         f,
@@ -199,7 +199,7 @@ pub fn generate(out_dir: &str) {
         "/// HTTP/2 max per-stream send buffer in bytes — set via H2_MAX_SEND_BUF"
     )
     .unwrap();
-    writeln!(f, "/// at build time (default: 1 MiB).").unwrap();
+    writeln!(f, "/// at build time (default: 256 KiB).").unwrap();
     writeln!(
         f,
         "pub(crate) const H2_MAX_SEND_BUF: usize = {h2_max_send_buf};"

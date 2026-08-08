@@ -29,6 +29,8 @@ WORKDIR /app/rust-server
 ENV DISABLE_LOGGING=false
 ENV NOT_FOUND_FILENAME=index.html
 ENV ALLOW_INLINE_STYLES=true
+ENV EMBED_ZSTD=false
+ENV EMBED_GZIP=false
 
 RUN RUST_TARGET=$(cat /rust_target) && \
     cargo build --release --target "$RUST_TARGET" && \

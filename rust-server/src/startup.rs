@@ -35,8 +35,11 @@ pub(crate) fn print_help() -> ! {
     elog!("  H2_CONN_WINDOW        HTTP/2 connection flow-control window in bytes (default: 16 MiB)");
     elog!("  H2_STREAM_WINDOW      HTTP/2 per-stream flow-control window in bytes (default: 4 MiB)");
     elog!("  H2_MAX_FRAME_SIZE     HTTP/2 max frame size in bytes (default: 65535)");
-    elog!("  H2_MAX_SEND_BUF       HTTP/2 per-stream send buffer in bytes (default: 1 MiB)");
+    elog!("  H2_MAX_SEND_BUF       HTTP/2 per-stream send buffer in bytes (default: 256 KiB)");
     elog!("  SHUTDOWN_TIMEOUT_SECS Graceful shutdown timeout in seconds (default: 3)");
+    elog!("  EMBED_GZIP            Embed gzip-encoded asset bodies (default: true)");
+    elog!("  EMBED_BROTLI          Embed brotli-encoded asset bodies (default: true)");
+    elog!("  EMBED_ZSTD            Embed zstd-encoded asset bodies (default: true)");
     elog!("  DISABLE_SRI           Disable Subresource Integrity hashing (default: false)");
     elog!("  ALLOW_INLINE_STYLES   Allow 'unsafe-inline' in style-src for dynamic CSS (default: false)");
     elog!("  DISABLE_LOGGING       Compile out all stderr output (default: true)");

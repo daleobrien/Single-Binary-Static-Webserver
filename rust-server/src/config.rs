@@ -210,9 +210,9 @@ mod tests {
     // ── H2_MAX_SEND_BUF ───────────────────────────────────────────
 
     #[test]
-    fn h2_max_send_buf_default_is_1_mib() {
+    fn h2_max_send_buf_default_is_256_kib() {
         if option_env!("H2_MAX_SEND_BUF").is_none() {
-            assert_eq!(H2_MAX_SEND_BUF, 1024 * 1024);
+            assert_eq!(H2_MAX_SEND_BUF, 256 * 1024);
         }
     }
 

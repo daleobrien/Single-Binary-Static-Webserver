@@ -56,6 +56,9 @@ mod codegen_tests {
             version_gzip_len: 50,
             version_brotli_len: 30,
             version_zstd_len: 25,
+            embed_gzip: true,
+            embed_brotli: true,
+            embed_zstd: true,
         }
     }
 

@@ -95,7 +95,7 @@ NOT_FOUND_FILENAME = "not-found.html"
 DISABLE_SRI = "true"
 ALLOW_INLINE_STYLES = "true"
 FORM_ACTION = "https://auth.example.com"
-CONNECT_SRC = "https://api.example.com"
+CONNECT_SRC = "https://api.example.com https://something.else:3443"
 ```
 
 | Variable | Default | Description |

@@ -17,6 +17,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DISABLE_SRI");
     println!("cargo:rerun-if-env-changed=ALLOW_INLINE_STYLES");
     println!("cargo:rerun-if-env-changed=NOT_FOUND_FILENAME");
+    println!("cargo:rerun-if-env-changed=EMBED_GZIP");
+    println!("cargo:rerun-if-env-changed=EMBED_BROTLI");
+    println!("cargo:rerun-if-env-changed=EMBED_ZSTD");
+
+    // Rebuild when any file in public/ changes (recursive).
+    println!("cargo:rerun-if-changed=../public");
 
     build_helpers::run();
 }

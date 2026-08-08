@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use http_body_util::Full;
-use hyper::header::CONTENT_ENCODING;
 
 use crate::Asset;
 
@@ -15,18 +14,6 @@ pub enum ContentEncoding {
     Brotli,
     /// Zstandard compression.
     Zstd,
-}
-
-impl ContentEncoding {
-    /// The `Content-Encoding` header value for this encoding, or `None` for Identity.
-    pub fn header_value(self) -> Option<&'static str> {
-        match self {
-            ContentEncoding::Identity => None,
-            ContentEncoding::Gzip => Some("gzip"),
-            ContentEncoding::Brotli => Some("br"),
-            ContentEncoding::Zstd => Some("zstd"),
-        }
-    }
 }
 
 /// Parse the `Accept-Encoding` request header and select the best encoding
@@ -130,6 +117,22 @@ pub(crate) fn content_length_for_encoding(asset: &Asset, encoding: ContentEncodi
     }
 }
 
+/// Return the pre-baked header slice for the given encoding.
+///
+/// Each variant includes all static headers plus per-encoding
+/// `Content-Length` and `Content-Encoding` (where applicable),
+/// computed at compile time so the request path has zero branches
+/// and zero allocations for header insertion.
+#[inline]
+pub fn headers_for_encoding(asset: &Asset, encoding: ContentEncoding) -> &'static [(&'static str, &'static str)] {
+    match encoding {
+        ContentEncoding::Identity => asset.headers_identity,
+        ContentEncoding::Gzip => asset.headers_gzip,
+        ContentEncoding::Brotli => asset.headers_brotli,
+        ContentEncoding::Zstd => asset.headers_zstd,
+    }
+}
+
 /// Build a full response for an asset's body (h1/h2 path).
 ///
 /// The `encoding` parameter selects which variant to serve based on the
@@ -149,26 +152,15 @@ pub fn response_for_asset(
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(Full::new(Bytes::from_static(body)));
     *resp.status_mut() = status;
+    let hdrs = headers_for_encoding(asset, encoding);
     let headers = resp.headers_mut();
-
-    // Reserve space for static headers + Content-Encoding if not identity.
-    let extra = if encoding != ContentEncoding::Identity { 1 } else { 0 };
-    headers.reserve(asset.headers.len() + extra);
-
-    for &(name, value) in asset.headers {
+    headers.reserve(hdrs.len());
+    for &(name, value) in hdrs {
         headers.insert(
             hyper::header::HeaderName::from_static(name),
             hyper::header::HeaderValue::from_static(value),
         );
     }
-
-    if let Some(ce_val) = encoding.header_value() {
-        headers.insert(
-            CONTENT_ENCODING,
-            hyper::header::HeaderValue::from_static(ce_val),
-        );
-    }
-
     resp
 }
 

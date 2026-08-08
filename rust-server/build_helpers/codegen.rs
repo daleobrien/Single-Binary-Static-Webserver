@@ -56,8 +56,7 @@ pub fn generate(ctx: &CodegenCtx) {
     // ── 404 fallback asset (only when no real 404.html exists) ──
     write_not_found_asset(&mut g, ctx);
 
-    // ── Static header slices ──
-    write_static_header_slices(&mut g, &ctx.header_sets);
+
 
     // ── Asset struct ──
     write_asset_struct(&mut g);
@@ -381,32 +380,7 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g).unwrap();
 }
 
-/// Generate `const` header slices as `&[(&str, &str)]`.
-/// We store string pairs rather than pre-built `HeaderName`/`HeaderValue` because
-/// those types contain interior-mutable `Bytes` (atomic refcount) and Rust disallows
-/// them in static/const items.
-///
-/// `HeaderName::from_static` / `HeaderValue::from_static` are `const fn` — validation
-/// happens at compile time and the request-time call is just a pointer wrap, so the
-/// overhead is negligible while avoiding the per-request `HeaderMap::clone()` allocation.
-fn write_static_header_slices(g: &mut fs::File, header_sets: &[Vec<(String, String)>]) {
-    for (i, headers) in header_sets.iter().enumerate() {
-        writeln!(
-            g,
-            "const HEADERS_{i}: &[(&str, &str)] = &["
-        )
-        .unwrap();
-        for (name, value) in headers {
-            writeln!(
-                g,
-                "    (\"{name}\", \"{value}\"),"
-            )
-            .unwrap();
-        }
-        writeln!(g, "];").unwrap();
-        writeln!(g).unwrap();
-    }
-}
+
 
 // ── write_asset_struct ───────────────────────────────────────────────
 
@@ -440,8 +414,62 @@ fn write_asset_struct(g: &mut fs::File) {
     writeln!(g, "    pub content_type: &'static str,").unwrap();
     writeln!(g, "    pub file: &'static str,").unwrap();
     writeln!(g, "    pub status_code: u16,").unwrap();
-    writeln!(g, "    pub headers: &'static [(&'static str, &'static str)],").unwrap();
+    writeln!(g, "    pub headers_identity: &'static [(&'static str, &'static str)],
+    pub headers_gzip: &'static [(&'static str, &'static str)],
+    pub headers_brotli: &'static [(&'static str, &'static str)],
+    pub headers_zstd: &'static [(&'static str, &'static str)],").unwrap();
     writeln!(g, "}}").unwrap();
+    writeln!(g).unwrap();
+}
+
+// ── write_per_encoding_header_arrays ──────────────────────────────────
+
+fn write_per_encoding_header_arrays(
+    g: &mut fs::File,
+    const_prefix: &str,
+    shared_headers: &[(String, String)],
+    identity_len: usize,
+    gzip_len: usize,
+    brotli_len: usize,
+    zstd_len: usize,
+) {
+    // Identity (no content-encoding header)
+    writeln!(g, "const {const_prefix}_HEADERS_IDENTITY: &[(&str, &str)] = &[").unwrap();
+    for (name, value) in shared_headers {
+        writeln!(g, "    (\"{name}\", \"{value}\"),").unwrap();
+    }
+    writeln!(g, "    (\"content-length\", \"{identity_len}\"),").unwrap();
+    writeln!(g, "];").unwrap();
+    writeln!(g).unwrap();
+
+    // Gzip
+    writeln!(g, "const {const_prefix}_HEADERS_GZIP: &[(&str, &str)] = &[").unwrap();
+    for (name, value) in shared_headers {
+        writeln!(g, "    (\"{name}\", \"{value}\"),").unwrap();
+    }
+    writeln!(g, "    (\"content-length\", \"{gzip_len}\"),").unwrap();
+    writeln!(g, "    (\"content-encoding\", \"gzip\"),").unwrap();
+    writeln!(g, "];").unwrap();
+    writeln!(g).unwrap();
+
+    // Brotli
+    writeln!(g, "const {const_prefix}_HEADERS_BROTLI: &[(&str, &str)] = &[").unwrap();
+    for (name, value) in shared_headers {
+        writeln!(g, "    (\"{name}\", \"{value}\"),").unwrap();
+    }
+    writeln!(g, "    (\"content-length\", \"{brotli_len}\"),").unwrap();
+    writeln!(g, "    (\"content-encoding\", \"br\"),").unwrap();
+    writeln!(g, "];").unwrap();
+    writeln!(g).unwrap();
+
+    // Zstd
+    writeln!(g, "const {const_prefix}_HEADERS_ZSTD: &[(&str, &str)] = &[").unwrap();
+    for (name, value) in shared_headers {
+        writeln!(g, "    (\"{name}\", \"{value}\"),").unwrap();
+    }
+    writeln!(g, "    (\"content-length\", \"{zstd_len}\"),").unwrap();
+    writeln!(g, "    (\"content-encoding\", \"zstd\"),").unwrap();
+    writeln!(g, "];").unwrap();
     writeln!(g).unwrap();
 }
 
@@ -452,6 +480,17 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         let p = &a.const_prefix;
         let hi = ctx.asset_header_indices[i];
         let sc = a.status_code;
+
+        write_per_encoding_header_arrays(
+            g,
+            p,
+            &ctx.header_sets[hi],
+            ctx.uncompressed_lengths[i],
+            ctx.gzip_lengths[i],
+            ctx.brotli_lengths[i],
+            ctx.zstd_lengths[i],
+        );
+
         writeln!(g, "static {p}_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: {p}_BODY,").unwrap();
         writeln!(g, "    body_gzip: {p}_BODY_GZIP,").unwrap();
@@ -465,12 +504,25 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    content_type: {p}_TYPE,").unwrap();
         writeln!(g, "    file: {p}_FILE,").unwrap();
         writeln!(g, "    status_code: {sc},").unwrap();
-        writeln!(g, "    headers: HEADERS_{hi},").unwrap();
+        writeln!(g, "    headers_identity: {p}_HEADERS_IDENTITY,").unwrap();
+        writeln!(g, "    headers_gzip: {p}_HEADERS_GZIP,").unwrap();
+        writeln!(g, "    headers_brotli: {p}_HEADERS_BROTLI,").unwrap();
+        writeln!(g, "    headers_zstd: {p}_HEADERS_ZSTD,").unwrap();
         writeln!(g, "}};").unwrap();
         writeln!(g).unwrap();
     }
 
     // version asset
+    write_per_encoding_header_arrays(
+        g,
+        "VERSION",
+        &ctx.header_sets[ctx.version_header_idx],
+        ctx.version_uncompressed_len,
+        ctx.version_gzip_len,
+        ctx.version_brotli_len,
+        ctx.version_zstd_len,
+    );
+
     writeln!(g, "static VERSION_ASSET: Asset = Asset {{").unwrap();
     writeln!(g, "    body: VERSION_BODY,").unwrap();
     writeln!(g, "    body_gzip: VERSION_BODY_GZIP,").unwrap();
@@ -484,12 +536,28 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "    content_type: VERSION_TYPE,").unwrap();
     writeln!(g, "    file: VERSION_FILE,").unwrap();
     writeln!(g, "    status_code: 200,").unwrap();
-    writeln!(g, "    headers: HEADERS_{},", ctx.version_header_idx).unwrap();
+    writeln!(g, "    headers_identity: VERSION_HEADERS_IDENTITY,").unwrap();
+    writeln!(g, "    headers_gzip: VERSION_HEADERS_GZIP,").unwrap();
+    writeln!(g, "    headers_brotli: VERSION_HEADERS_BROTLI,").unwrap();
+    writeln!(g, "    headers_zstd: VERSION_HEADERS_ZSTD,").unwrap();
     writeln!(g, "}};").unwrap();
     writeln!(g).unwrap();
 
     // 404 fallback — only when no real 404.html exists
     if !ctx.has_404 {
+        let not_found_body: &[u8] = b"<h1>404 - Not Found</h1>";
+        let not_found_len = not_found_body.len();
+
+        write_per_encoding_header_arrays(
+            g,
+            "NOT_FOUND",
+            &ctx.header_sets[ctx.not_found_header_idx],
+            not_found_len,
+            not_found_len,
+            not_found_len,
+            not_found_len,
+        );
+
         writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
         writeln!(g, "    body_gzip: NOT_FOUND_BODY_GZIP,").unwrap();
@@ -503,7 +571,10 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
         writeln!(g, "    file: NOT_FOUND_FILE,").unwrap();
         writeln!(g, "    status_code: 404,").unwrap();
-        writeln!(g, "    headers: HEADERS_{},", ctx.not_found_header_idx).unwrap();
+        writeln!(g, "    headers_identity: NOT_FOUND_HEADERS_IDENTITY,").unwrap();
+        writeln!(g, "    headers_gzip: NOT_FOUND_HEADERS_GZIP,").unwrap();
+        writeln!(g, "    headers_brotli: NOT_FOUND_HEADERS_BROTLI,").unwrap();
+        writeln!(g, "    headers_zstd: NOT_FOUND_HEADERS_ZSTD,").unwrap();
         writeln!(g, "}};").unwrap();
         writeln!(g).unwrap();
     }

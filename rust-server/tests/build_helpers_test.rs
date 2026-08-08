@@ -23,6 +23,13 @@ mod codegen_tests {
 
     /// Helper to build a minimal CodegenCtx for testing.
     fn minimal_ctx(out_dir: &str) -> CodegenCtx {
+        let version_headers = vec![
+            ("content-type".to_string(), "text/plain".to_string()),
+            ("cache-control".to_string(), "no-cache".to_string()),
+        ];
+        let not_found_headers = vec![
+            ("content-type".to_string(), "text/html".to_string()),
+        ];
         CodegenCtx {
             out_dir: out_dir.to_string(),
             build_version: "test-version-hash".to_string(),
@@ -32,7 +39,11 @@ mod codegen_tests {
                 status_code: 200,
             }],
             asset_header_indices: vec![0],
-            header_sets: vec![vec![("content-type".to_string(), "text/html".to_string())]],
+            header_sets: vec![
+                vec![("content-type".to_string(), "text/html".to_string())],
+                version_headers,
+                not_found_headers,
+            ],
             version_header_idx: 1,
             not_found_header_idx: 2,
             not_found_const_prefix: None,
@@ -77,8 +88,20 @@ mod codegen_tests {
             "Asset struct must include body_zstd field.\nGenerated:\n{generated}"
         );
         assert!(
-            generated.contains("pub headers: &'static [(&'static str, &'static str)],"),
-            "Asset struct must include headers field.\nGenerated:\n{generated}"
+            generated.contains("pub headers_identity: &'static [(&'static str, &'static str)],"),
+            "Asset struct must include headers_identity field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub headers_gzip: &'static [(&'static str, &'static str)],"),
+            "Asset struct must include headers_gzip field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub headers_brotli: &'static [(&'static str, &'static str)],"),
+            "Asset struct must include headers_brotli field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub headers_zstd: &'static [(&'static str, &'static str)],"),
+            "Asset struct must include headers_zstd field.\nGenerated:\n{generated}"
         );
     }
 
@@ -226,8 +249,20 @@ mod codegen_tests {
             "Asset instance must initialize body_zstd.\nGenerated:\n{generated}"
         );
         assert!(
-            generated.contains("headers: HEADERS_0,"),
-            "Asset instance must initialize headers from HEADERS_0.\nGenerated:\n{generated}"
+            generated.contains("headers_identity: INDEX_HTML_HEADERS_IDENTITY,"),
+            "Asset instance must initialize headers_identity.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("headers_gzip: INDEX_HTML_HEADERS_GZIP,"),
+            "Asset instance must initialize headers_gzip.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("headers_brotli: INDEX_HTML_HEADERS_BROTLI,"),
+            "Asset instance must initialize headers_brotli.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("headers_zstd: INDEX_HTML_HEADERS_ZSTD,"),
+            "Asset instance must initialize headers_zstd.\nGenerated:\n{generated}"
         );
 
         // Version asset instance
@@ -258,18 +293,16 @@ mod codegen_tests {
 
         let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
-        // content_length_str and _LEN_STR are removed
-        assert!(
-            !generated.contains("content_length_str"),
-            "Generated code must not contain content_length_str.\nGenerated:\n{generated}"
-        );
-        assert!(
-            !generated.contains("_LEN_STR"),
-            "Generated code must not contain _LEN_STR.\nGenerated:\n{generated}"
-        );
+        // content_length as a struct field is removed — but "content-length"
+        // as a header key in the precomputed header arrays is now expected.
         assert!(
             !generated.contains("content_length:"),
-            "Generated code must not contain content_length: field.\nGenerated:\n{generated}"
+            "Generated code must not contain content_length: field (the struct field was removed).\nGenerated:\n{generated}"
+        );
+        // Verify the precomputed header arrays do contain content-length
+        assert!(
+            generated.contains("\"content-length\""),
+            "Generated code must contain content-length in header arrays.\nGenerated:\n{generated}"
         );
     }
 }

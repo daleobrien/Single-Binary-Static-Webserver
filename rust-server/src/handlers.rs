@@ -323,34 +323,23 @@ where
 
 // ── Extracted h3 helpers (de-duplicate the logging and response-construction logic) ──
 
-/// Build an h3 `Response<()>` from the asset's static header slice,
-/// adding the `Content-Length` and `Content-Encoding` headers dynamically
-/// based on the negotiated encoding.
+/// Build an h3 `Response<()>` from the asset's pre-baked per-encoding header slice.
+///
+/// `Content-Length` and `Content-Encoding` are computed at compile time for each
+/// encoding variant, so the request path has no allocations or conditional logic.
 #[inline]
 fn h3_response_for_asset(asset: &Asset, encoding: ContentEncoding) -> hyper::Response<()> {
     let status =
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(());
     *resp.status_mut() = status;
+    let hdrs = response::headers_for_encoding(asset, encoding);
     let headers = resp.headers_mut();
-    // Reserve for static headers + Content-Length + Content-Encoding (if not identity).
-    let extra = 1 + if encoding != ContentEncoding::Identity { 1 } else { 0 };
-    headers.reserve(asset.headers.len() + extra);
-    for &(name, value) in asset.headers {
+    headers.reserve(hdrs.len());
+    for &(name, value) in hdrs {
         headers.insert(
             hyper::header::HeaderName::from_static(name),
             hyper::header::HeaderValue::from_static(value),
-        );
-    }
-    let cl = response::content_length_for_encoding(asset, encoding);
-    headers.insert(
-        hyper::header::CONTENT_LENGTH,
-        hyper::header::HeaderValue::from_str(&cl.to_string()).expect("content-length should be valid"),
-    );
-    if let Some(ce_val) = encoding.header_value() {
-        headers.insert(
-            hyper::header::CONTENT_ENCODING,
-            hyper::header::HeaderValue::from_static(ce_val),
         );
     }
     resp

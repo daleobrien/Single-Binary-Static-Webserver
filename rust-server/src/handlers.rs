@@ -5,20 +5,28 @@ use hyper::header::{HeaderValue, CACHE_CONTROL, ETAG};
 use hyper::Request;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+#[cfg(not(disable_http3))]
 use std::sync::atomic::Ordering;
 use std::time::Instant;
+#[cfg(not(disable_http3))]
 use tokio::sync::mpsc;
 
-use crate::config::H3_HANDLERS_PER_CONNECTION;
-use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
-use crate::response::{self, ContentEncoding};
-use crate::{route, Asset, BUILD_VERSION};
+use crate::response;
+#[cfg(not(disable_http3))]
+use {
+    crate::config::H3_HANDLERS_PER_CONNECTION,
+    crate::error::is_client_cancel,
+    crate::response::ContentEncoding,
+    crate::Asset,
+};
+use crate::{route, BUILD_VERSION};
 
 // ── Protocol strings as static slices — no per-request allocation ─────
 
 const PROTO_H1: &str = "HTTP/1.1";
 const PROTO_H2: &str = "HTTP/2.0";
+#[cfg(not(disable_http3))]
 const PROTO_H3: &str = "HTTP/3";
 
 /// Returns true if the request's `If-None-Match` header matches the build version,
@@ -50,6 +58,7 @@ fn not_modified_response() -> hyper::Response<Full<Bytes>> {
 }
 
 /// Build a 304 Not Modified response with an empty `()` body (for h3).
+#[cfg(not(disable_http3))]
 #[inline]
 fn not_modified_response_h3() -> hyper::Response<()> {
     let mut resp = hyper::Response::new(());
@@ -142,12 +151,15 @@ pub(crate) async fn handle_request(
 
 // ── h3 type aliases (module-level so helpers can reference them) ──────
 
+#[cfg(not(disable_http3))]
 type H3Stream<C> =
     h3::server::RequestStream<<C as h3::quic::OpenStreams<Bytes>>::BidiStream, Bytes>;
+#[cfg(not(disable_http3))]
 type H3Resolver<C> = h3::server::RequestResolver<C, Bytes>;
 
 /// Process a single h3 request in the context of a handler-pool task.
 /// Called from a pre-spawned handler — no additional `tokio::spawn` required.
+#[cfg(not(disable_http3))]
 async fn h3_handle_one_request<C>(
     resolver: H3Resolver<C>,
     remote_addr: SocketAddr,
@@ -256,6 +268,7 @@ async fn h3_handle_one_request<C>(
 /// separate channel so they can be kept alive until Quinn's I/O driver
 /// has transmitted the FIN packet — preventing Safari from showing empty
 /// pages over HTTP/3.
+#[cfg(not(disable_http3))]
 pub(crate) async fn handle_h3_connection<C>(
     conn: C,
     remote_addr: SocketAddr,
@@ -331,6 +344,7 @@ where
 ///
 /// `Content-Length` and `Content-Encoding` are computed at compile time for each
 /// encoding variant, so the request path has no allocations or conditional logic.
+#[cfg(not(disable_http3))]
 #[inline]
 fn h3_response_for_asset(asset: &Asset, encoding: ContentEncoding) -> hyper::Response<()> {
     let status =
@@ -351,6 +365,7 @@ fn h3_response_for_asset(asset: &Asset, encoding: ContentEncoding) -> hyper::Res
 
 /// Log the outcome of an h3 request — extracted from the two call sites
 /// (304 and full response) to eliminate duplicated logging logic.
+#[cfg(not(disable_http3))]
 fn log_h3_outcome(
     log_mode: &LogMode,
     remote_addr: SocketAddr,
@@ -403,12 +418,14 @@ mod tests {
 
     // ── not_modified_response_h3 ─────────────────────────────────
 
+    #[cfg(not(disable_http3))]
     #[test]
     fn not_modified_response_h3_has_304_status() {
         let resp = not_modified_response_h3();
         assert_eq!(resp.status(), hyper::StatusCode::NOT_MODIFIED);
     }
 
+    #[cfg(not(disable_http3))]
     #[test]
     fn not_modified_response_h3_has_etag() {
         let resp = not_modified_response_h3();

@@ -117,6 +117,7 @@ mod tests {
 
     // ── H3_HANDLERS_PER_CONNECTION ─────────────────────────────────
 
+    #[cfg(not(disable_http3))]
     #[test]
     fn h3_handlers_per_connection_default_is_8() {
         if option_env!("H3_HANDLERS_PER_CONNECTION").is_none() {
@@ -124,6 +125,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(disable_http3))]
     #[test]
     fn override_h3_handlers_per_connection_matches_env() {
         if let Some(raw) = option_env!("H3_HANDLERS_PER_CONNECTION") {
@@ -240,6 +242,24 @@ mod tests {
             let expected = raw == "1" || raw.to_lowercase() == "true";
             assert_eq!(DISABLE_LOGGING, expected,
                 "DISABLE_LOGGING constant must match DISABLE_LOGGING env var");
+        }
+    }
+
+    // ── DISABLE_HTTP3 ─────────────────────────────────────────────
+
+    #[test]
+    fn disable_http3_default_is_false() {
+        if option_env!("DISABLE_HTTP3").is_none() {
+            assert!(!DISABLE_HTTP3);
+        }
+    }
+
+    #[test]
+    fn override_disable_http3_matches_env() {
+        if let Some(raw) = option_env!("DISABLE_HTTP3") {
+            let expected = raw == "1" || raw.to_lowercase() == "true";
+            assert_eq!(DISABLE_HTTP3, expected,
+                "DISABLE_HTTP3 constant must match DISABLE_HTTP3 env var");
         }
     }
 }

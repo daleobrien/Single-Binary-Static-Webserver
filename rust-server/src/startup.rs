@@ -32,6 +32,7 @@ pub(crate) fn print_help() -> ! {
     elog!("  MAX_CONNS             Maximum concurrent TCP connections (default: 1024)");
     elog!("  TCP_HANDLERS_PER_WORKER Number of TCP handler tasks per worker (default: max(MAX_CONNS/WORKERS, 64))");
     elog!("  H3_HANDLERS_PER_CONNECTION Number of h3 handler tasks per connection (default: 8)");
+    elog!("  DISABLE_HTTP3         Compile out all HTTP/3 (QUIC) support (default: false)");
     elog!("  H2_CONN_WINDOW        HTTP/2 connection flow-control window in bytes (default: 16 MiB)");
     elog!("  H2_STREAM_WINDOW      HTTP/2 per-stream flow-control window in bytes (default: 4 MiB)");
     elog!("  H2_MAX_FRAME_SIZE     HTTP/2 max frame size in bytes (default: 65535)");
@@ -53,7 +54,8 @@ pub(crate) fn print_banner(port: u16, num_workers: usize, num_assets: usize, sum
     elog!("  http://{HOSTNAME}:{port}  |  https://{HOSTNAME}:{port}");
     elog!();
     elog!(
-        "  {num_assets} assets  ·  {num_workers} workers  ·  SO_REUSEPORT  ·  h1.1 / h2 / h3",
+        "  {num_assets} assets  ·  {num_workers} workers  ·  SO_REUSEPORT  ·  h1.1 / h2{}",
+        if crate::config::DISABLE_HTTP3 { "" } else { " / h3" },
     );
     if summary_mode {
         elog!("  Log: req/s reported every 5s");

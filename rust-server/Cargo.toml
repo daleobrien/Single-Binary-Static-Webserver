@@ -5,12 +5,16 @@ description = "A minimal Rust web server serving embedded static files with secu
 edition = "2021"
 license = "MIT"
 
+[features]
+default = ["http3"]
+http3 = ["dep:quinn", "dep:h3", "dep:h3-quinn"]
+
 [dependencies]
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "http2"] }
-quinn = { version = "0.11", default-features = false, features = ["ring", "runtime-tokio", "rustls-ring"] }
-h3 = "0.0.8"
-h3-quinn = "0.0.10"
+quinn = { version = "0.11", default-features = false, features = ["ring", "runtime-tokio", "rustls-ring"], optional = true }
+h3 = { version = "0.0.8", optional = true }
+h3-quinn = { version = "0.0.10", optional = true }
 http-body-util = "0.1"
 bytes = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }

@@ -7,6 +7,7 @@
 ///
 /// If the upstream crates expose structured error kinds in the future, this
 /// should be migrated to type-based matching instead of string matching.
+#[cfg(not(disable_http3))]
 pub(crate) fn is_client_cancel(e: &dyn std::error::Error) -> bool {
     let msg = format!("{e:?}");
     // Case-insensitive substring matching for robustness against
@@ -21,6 +22,7 @@ pub(crate) fn is_client_cancel(e: &dyn std::error::Error) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(not(disable_http3))]
 mod tests {
     use super::*;
 

@@ -1,5 +1,7 @@
 use socket2::{Domain, Protocol, Socket, Type};
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
+#[cfg(not(disable_http3))]
+use std::net::UdpSocket;
 use tokio::net::TcpListener;
 
 pub(crate) fn create_reuseport_listener(
@@ -15,6 +17,7 @@ pub(crate) fn create_reuseport_listener(
     Ok(TcpListener::from_std(std_listener)?)
 }
 
+#[cfg(not(disable_http3))]
 pub(crate) fn create_reuseport_udp_socket(
     port: u16,
 ) -> Result<UdpSocket, Box<dyn std::error::Error + Send + Sync>> {

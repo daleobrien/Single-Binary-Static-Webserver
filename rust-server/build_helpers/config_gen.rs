@@ -117,6 +117,11 @@ pub fn generate(out_dir: &str) {
     .unwrap();
     writeln!(
         f,
+        "#[cfg(not(disable_http3))]"
+    )
+    .unwrap();
+    writeln!(
+        f,
         "pub(crate) const H3_HANDLERS_PER_CONNECTION: usize = {h3_handlers_per_connection};"
     )
     .unwrap();
@@ -228,4 +233,22 @@ pub fn generate(out_dir: &str) {
     )
     .unwrap();
     writeln!(f, "pub(crate) const DISABLE_LOGGING: bool = {disable_logging};").unwrap();
+    writeln!(f).unwrap();
+
+    let disable_http3: bool = env::var("DISABLE_HTTP3")
+        .ok()
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    writeln!(
+        f,
+        "/// Disable HTTP/3 (QUIC) support — set via DISABLE_HTTP3 at build time (default: false)."
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "/// When true, all QUIC/h3 code is compiled out, reducing binary size and RAM usage."
+    )
+    .unwrap();
+    writeln!(f, "pub(crate) const DISABLE_HTTP3: bool = {disable_http3};").unwrap();
 }

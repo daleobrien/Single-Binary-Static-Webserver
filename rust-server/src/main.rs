@@ -12,6 +12,7 @@ mod config;
 mod error;
 mod handlers;
 mod logging;
+#[cfg(not(disable_http3))]
 mod quic_worker;
 mod response;
 mod shutdown;
@@ -70,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let mut handles = tcp_worker::spawn_tcp_workers(worker_cfg.clone())?;
+    #[cfg(not(disable_http3))]
     handles.extend(quic_worker::spawn_quic_workers(worker_cfg)?);
     // Track the logging background task so it is joined during shutdown.
     handles.push(log_handle);

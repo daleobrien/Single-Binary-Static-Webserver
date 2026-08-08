@@ -125,7 +125,8 @@ pub fn run() {
         header_sets,
         _max_path_len,
         has_404,
-        not_found_const_prefix,
+        _not_found_const_prefix,
+        not_found_file,
         uncompressed_lengths,
         gzip_lengths,
         brotli_lengths,
@@ -147,14 +148,16 @@ pub fn run() {
     let (version_header_idx, mut header_sets, version_uncompressed_len, version_gzip_len, version_brotli_len, version_zstd_len) =
         build_version_headers(&build_version, &gzip_dir, &br_dir, &zst_dir, header_sets);
 
-    let not_found_header_idx = if !has_404 {
+    let not_found_header_idx = if has_404 {
+        // Use the headers from the NOT_FOUND_FILENAME's asset.
+        // Find its position in the files list to get the correct header index.
+        let nf_file = not_found_file.as_ref().unwrap();
+        let pos = files.iter().position(|f| f == nf_file).unwrap();
+        asset_header_indices[pos]
+    } else {
         let (idx, hs) = build_not_found_headers(&security_headers, header_sets, &build_version);
         header_sets = hs;
         idx
-    } else {
-        // When 404.html exists, it uses the regular asset headers — no separate
-        // header set is needed.
-        0
     };
 
     // ── Generate Rust source ──
@@ -166,9 +169,8 @@ pub fn run() {
         header_sets,
         version_header_idx,
         not_found_header_idx,
-        not_found_const_prefix,
+        not_found_file,
         files,
-        has_404,
         uncompressed_lengths,
         version_uncompressed_len,
         gzip_lengths,

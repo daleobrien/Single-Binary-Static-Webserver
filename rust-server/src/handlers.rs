@@ -83,7 +83,9 @@ pub(crate) async fn handle_request(
     log_mode: LogMode,
 ) -> Result<hyper::Response<TimedBody>, Infallible> {
     let start = Instant::now();
-    let path = req.uri().path();
+    let raw_path = req.uri().path();
+    // Normalize empty path to "/" so root requests always resolve to index.html
+    let path = if raw_path.is_empty() { "/" } else { raw_path };
     let method = req.method();
     let protocol = protocol_str(req.version());
 
@@ -167,7 +169,9 @@ async fn h3_handle_one_request<C>(
 
     // ── Full end-to-end timing (CPU + I/O, matching h1/h2) ──
     let start = Instant::now();
-    let path = req.uri().path();
+    let raw_path = req.uri().path();
+    // Normalize empty path to "/" so root requests always resolve to index.html
+    let path = if raw_path.is_empty() { "/" } else { raw_path };
     let method = req.method().as_str();
 
     // Generic ETag check: return 304 for any resource if

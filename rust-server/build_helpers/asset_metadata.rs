@@ -23,6 +23,7 @@ pub(super) fn build_asset_metadata(
     usize,
     bool,
     Option<String>,
+    Option<String>,
     Vec<usize>,
     Vec<usize>,
     Vec<usize>,
@@ -33,6 +34,7 @@ pub(super) fn build_asset_metadata(
     let mut assets: Vec<AssetGen> = Vec::new();
     let mut asset_header_indices: Vec<usize> = Vec::new();
     let mut has_404 = false;
+    let mut not_found_file: Option<String> = None;
     let mut not_found_const_prefix: Option<String> = None;
     let mut max_path_len: usize = 0;
     let mut uncompressed_lengths: Vec<usize> = Vec::with_capacity(files.len());
@@ -52,7 +54,8 @@ pub(super) fn build_asset_metadata(
         let status_code = if file == not_found_filename {
             has_404 = true;
             not_found_const_prefix = Some(const_prefix.clone());
-            404
+            not_found_file = Some(file.clone());
+            200
         } else {
             200
         };
@@ -128,6 +131,7 @@ pub(super) fn build_asset_metadata(
         max_path_len,
         has_404,
         not_found_const_prefix,
+        not_found_file,
         uncompressed_lengths,
         gzip_lengths,
         brotli_lengths,

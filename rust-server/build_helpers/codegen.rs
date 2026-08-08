@@ -19,9 +19,8 @@ pub struct CodegenCtx {
     pub header_sets: Vec<Vec<(String, String)>>,
     pub version_header_idx: usize,
     pub not_found_header_idx: usize,
-    pub not_found_const_prefix: Option<String>,
+    pub not_found_file: Option<String>,
     pub files: Vec<String>,
-    pub has_404: bool,
     pub uncompressed_lengths: Vec<usize>,
     pub version_uncompressed_len: usize,
     pub gzip_lengths: Vec<usize>,
@@ -55,6 +54,9 @@ pub fn generate(ctx: &CodegenCtx) {
 
     // ── 404 fallback asset (only when no real 404.html exists) ──
     write_not_found_asset(&mut g, ctx);
+
+    // ── Chrome DevTools well-known empty 404 ──
+    write_chrome_devtools_asset(&mut g, ctx);
 
 
 
@@ -334,14 +336,35 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
 // ── write_not_found_asset ─────────────────────────────────────────────
 
 fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
-    // Only generate a separate NOT_FOUND asset when there's no real 404.html.
-    // When 404.html exists, it goes through the regular asset pipeline and is
-    // referenced directly by the catch-all route.
-    if ctx.has_404 {
+    if let Some(ref nf_file) = ctx.not_found_file {
+        // Use the body from the configured 404 file (e.g. index.html or 404.html),
+        // so the catch-all returns the same content as the file but with status 404.
+        writeln!(
+            g,
+            "// ── 404 Not Found (from {nf_file}) ────────────────────"
+        )
+        .unwrap();
+        writeln!(g, "const NOT_FOUND_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{nf_file}.gz.raw\"));").unwrap();
+        let len_field = format!("NOT_FOUND_UNCOMPRESSED_LEN: usize = NOT_FOUND_BODY.len();");
+        writeln!(g, "const {len_field}").unwrap();
+        // All encoding variants point to the same body — the file's body is already pre-compressed
+        // variants, so serve uncompressed for simplicity.
+        writeln!(g, "const NOT_FOUND_BODY_GZIP: &[u8] = NOT_FOUND_BODY;").unwrap();
+        writeln!(g, "const NOT_FOUND_BODY_BROTLI: &[u8] = NOT_FOUND_BODY;").unwrap();
+        writeln!(g, "const NOT_FOUND_BODY_ZSTD: &[u8] = NOT_FOUND_BODY;").unwrap();
+        writeln!(g, "const NOT_FOUND_SAVINGS_PCT: usize = 0;").unwrap();
+        writeln!(
+            g,
+            "const NOT_FOUND_TYPE: &str = \"{}\";",
+            utils::mime_for_file(nf_file)
+        )
+        .unwrap();
+        writeln!(g, "const NOT_FOUND_FILE: &str = \"{nf_file}\";").unwrap();
         writeln!(g).unwrap();
         return;
     }
 
+    // No matching file — use the inline fallback.
     let body: &[u8] = b"<h1>404 - Not Found</h1>";
     let len = body.len();
     let escaped_body = utils::escape_byte_string(body);
@@ -380,6 +403,25 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g).unwrap();
 }
 
+fn write_chrome_devtools_asset(g: &mut fs::File, _ctx: &CodegenCtx) {
+    // Always generate this special empty 404 regardless of NOT_FOUND_FILENAME.
+    // Chrome probes this path for custom DevTools support; we respond with
+    // a 404 (no content) to signal "not available" cleanly.
+    writeln!(
+        g,
+        "// ── Chrome DevTools well-known (empty 404) ───────────"
+    )
+    .unwrap();
+    writeln!(g, "const CHROME_DT_BODY: &[u8] = b\"\";").unwrap();
+    writeln!(g, "const CHROME_DT_BODY_GZIP: &[u8] = b\"\";").unwrap();
+    writeln!(g, "const CHROME_DT_BODY_BROTLI: &[u8] = b\"\";").unwrap();
+    writeln!(g, "const CHROME_DT_BODY_ZSTD: &[u8] = b\"\";").unwrap();
+    writeln!(g, "const CHROME_DT_UNCOMPRESSED_LEN: usize = 0;").unwrap();
+    writeln!(g, "const CHROME_DT_SAVINGS_PCT: usize = 0;").unwrap();
+    writeln!(g, "const CHROME_DT_TYPE: &str = \"application/json\";").unwrap();
+    writeln!(g, "const CHROME_DT_FILE: &str = \"[chrome-devtools]\";").unwrap();
+    writeln!(g).unwrap();
+}
 
 
 // ── write_asset_struct ───────────────────────────────────────────────
@@ -543,11 +585,30 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "}};").unwrap();
     writeln!(g).unwrap();
 
-    // 404 fallback — only when no real 404.html exists
-    if !ctx.has_404 {
-        let not_found_body: &[u8] = b"<h1>404 - Not Found</h1>";
-        let not_found_len = not_found_body.len();
+    // 404 fallback — always generated; body from NOT_FOUND_FILENAME when
+    // available, otherwise inline HTML.
+    if ctx.not_found_file.is_some() {
+        // The not_found_header_idx was built for the NOT_FOUND file's headers.
+        // Write per-encoding header arrays using the const length.
+        let shared = &ctx.header_sets[ctx.not_found_header_idx];
 
+        writeln!(g, "const NOT_FOUND_HEADERS_IDENTITY: &[(&str, &str)] = &[").unwrap();
+        for (name, value) in shared {
+            writeln!(g, "    (\"{name}\", \"{value}\"),").unwrap();
+        }
+        // content-length is not included — hyper computes it from the body.
+        writeln!(g, "];").unwrap();
+        writeln!(g).unwrap();
+
+        // Gzip, Brotli, Zstd — use the pre-compressed variants from the file.
+        // For simplicity, all encoding variants serve the uncompressed body since
+        // the NOT_FOUND file is already processed through the compression pipeline.
+        writeln!(g, "const NOT_FOUND_HEADERS_GZIP: &[(&str, &str)] = NOT_FOUND_HEADERS_IDENTITY;").unwrap();
+        writeln!(g, "const NOT_FOUND_HEADERS_BROTLI: &[(&str, &str)] = NOT_FOUND_HEADERS_IDENTITY;").unwrap();
+        writeln!(g, "const NOT_FOUND_HEADERS_ZSTD: &[(&str, &str)] = NOT_FOUND_HEADERS_IDENTITY;").unwrap();
+        writeln!(g).unwrap();
+    } else {
+        let not_found_len: usize = 30; // "<h1>404 - Not Found</h1>"
         write_per_encoding_header_arrays(
             g,
             "NOT_FOUND",
@@ -557,27 +618,64 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
             not_found_len,
             not_found_len,
         );
-
-        writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
-        writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
-        writeln!(g, "    body_gzip: NOT_FOUND_BODY_GZIP,").unwrap();
-        writeln!(g, "    body_brotli: NOT_FOUND_BODY_BROTLI,").unwrap();
-        writeln!(g, "    body_zstd: NOT_FOUND_BODY_ZSTD,").unwrap();
-        writeln!(g, "    uncompressed_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
-        writeln!(g, "    gzip_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
-        writeln!(g, "    brotli_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
-        writeln!(g, "    zstd_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
-        writeln!(g, "    savings_pct: NOT_FOUND_SAVINGS_PCT,").unwrap();
-        writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
-        writeln!(g, "    file: NOT_FOUND_FILE,").unwrap();
-        writeln!(g, "    status_code: 404,").unwrap();
-        writeln!(g, "    headers_identity: NOT_FOUND_HEADERS_IDENTITY,").unwrap();
-        writeln!(g, "    headers_gzip: NOT_FOUND_HEADERS_GZIP,").unwrap();
-        writeln!(g, "    headers_brotli: NOT_FOUND_HEADERS_BROTLI,").unwrap();
-        writeln!(g, "    headers_zstd: NOT_FOUND_HEADERS_ZSTD,").unwrap();
-        writeln!(g, "}};").unwrap();
-        writeln!(g).unwrap();
     }
+
+    writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
+    writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
+    writeln!(g, "    body_gzip: NOT_FOUND_BODY_GZIP,").unwrap();
+    writeln!(g, "    body_brotli: NOT_FOUND_BODY_BROTLI,").unwrap();
+    writeln!(g, "    body_zstd: NOT_FOUND_BODY_ZSTD,").unwrap();
+    writeln!(g, "    uncompressed_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    gzip_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    brotli_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    zstd_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    savings_pct: NOT_FOUND_SAVINGS_PCT,").unwrap();
+    writeln!(g, "    content_type: NOT_FOUND_TYPE,").unwrap();
+    writeln!(g, "    file: NOT_FOUND_FILE,").unwrap();
+    writeln!(g, "    status_code: 404,").unwrap();
+    writeln!(g, "    headers_identity: NOT_FOUND_HEADERS_IDENTITY,").unwrap();
+    writeln!(g, "    headers_gzip: NOT_FOUND_HEADERS_GZIP,").unwrap();
+    writeln!(g, "    headers_brotli: NOT_FOUND_HEADERS_BROTLI,").unwrap();
+    writeln!(g, "    headers_zstd: NOT_FOUND_HEADERS_ZSTD,").unwrap();
+    writeln!(g, "}};").unwrap();
+    writeln!(g).unwrap();
+
+    // Chrome DevTools well-known empty 404 — always generated.
+    // Simple headers: only content-type, content-length, and cache-control.
+    let chrome_dt_headers: Vec<(String, String)> = vec![
+        ("content-type".into(), "application/json".into()),
+        ("content-length".into(), "0".into()),
+        ("cache-control".into(), "no-cache, no-store, must-revalidate".into()),
+    ];
+    write_per_encoding_header_arrays(
+        g,
+        "CHROME_DT",
+        &chrome_dt_headers,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    writeln!(g, "static CHROME_DT_ASSET: Asset = Asset {{").unwrap();
+    writeln!(g, "    body: CHROME_DT_BODY,").unwrap();
+    writeln!(g, "    body_gzip: CHROME_DT_BODY_GZIP,").unwrap();
+    writeln!(g, "    body_brotli: CHROME_DT_BODY_BROTLI,").unwrap();
+    writeln!(g, "    body_zstd: CHROME_DT_BODY_ZSTD,").unwrap();
+    writeln!(g, "    uncompressed_length: CHROME_DT_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    gzip_length: CHROME_DT_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    brotli_length: CHROME_DT_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    zstd_length: CHROME_DT_UNCOMPRESSED_LEN,").unwrap();
+    writeln!(g, "    savings_pct: CHROME_DT_SAVINGS_PCT,").unwrap();
+    writeln!(g, "    content_type: CHROME_DT_TYPE,").unwrap();
+    writeln!(g, "    file: CHROME_DT_FILE,").unwrap();
+    writeln!(g, "    status_code: 404,").unwrap();
+    writeln!(g, "    headers_identity: CHROME_DT_HEADERS_IDENTITY,").unwrap();
+    writeln!(g, "    headers_gzip: CHROME_DT_HEADERS_GZIP,").unwrap();
+    writeln!(g, "    headers_brotli: CHROME_DT_HEADERS_BROTLI,").unwrap();
+    writeln!(g, "    headers_zstd: CHROME_DT_HEADERS_ZSTD,").unwrap();
+    writeln!(g, "}};").unwrap();
+    writeln!(g).unwrap();
 }
 
 // ── write_all_assets_slice ───────────────────────────────────────────
@@ -593,9 +691,8 @@ fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g, "    &{}_ASSET,", a.const_prefix).unwrap();
     }
     writeln!(g, "    &VERSION_ASSET,").unwrap();
-    if !ctx.has_404 {
-        writeln!(g, "    &NOT_FOUND_ASSET,").unwrap();
-    }
+    writeln!(g, "    &CHROME_DT_ASSET,").unwrap();
+    writeln!(g, "    &NOT_FOUND_ASSET,").unwrap();
     writeln!(g, "];").unwrap();
     writeln!(g).unwrap();
 }
@@ -619,11 +716,12 @@ fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
         }
     }
     writeln!(g, "        \"/v\" => &VERSION_ASSET,").unwrap();
-    if let Some(ref p) = ctx.not_found_const_prefix {
-        writeln!(g, "        _ => &{p}_ASSET,").unwrap();
-    } else {
-        writeln!(g, "        _ => &NOT_FOUND_ASSET,").unwrap();
-    }
+    writeln!(
+        g,
+        "        \"/.well-known/appspecific/com.chrome.devtools.json\" => &CHROME_DT_ASSET,"
+    )
+    .unwrap();
+    writeln!(g, "        _ => &NOT_FOUND_ASSET,").unwrap();
     writeln!(g, "    }}").unwrap();
     writeln!(g, "}}").unwrap();
     writeln!(g).unwrap();

@@ -26,6 +26,10 @@ WORKDIR /app/rust-server
 # build.rs handles gzip pre-compression automatically.
 # Size optimizations are in Cargo.toml [profile.release]
 # Build a fully static binary — no runtime dependencies at all
+ENV DISABLE_LOGGING=false
+ENV NOT_FOUND_FILENAME=index.html
+ENV ALLOW_INLINE_STYLES=true
+
 RUN RUST_TARGET=$(cat /rust_target) && \
     cargo build --release --target "$RUST_TARGET" && \
     cp "./target/$RUST_TARGET/release/app" /app-bin && \

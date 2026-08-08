@@ -211,6 +211,15 @@ Every HTML response includes a small inline script that periodically calls `GET 
 
 The version check uses `If-None-Match` for efficient 304 responses when the version hasn't changed.
 
+## Comparsion with other runtimes
+
+| Runtime | RAM (MB)  | Image Size (MB) | Index load (ms)
+| --- | --- | --- | --- |
+| Rust-server | 36 | 1.46 | 2 |
+| Nginx-server | 7.54 | 62 | 4 |
+| Node-server | 282 | 307 | 10 |
+
+
 ## License
 
 MIT

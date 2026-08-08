@@ -7,6 +7,7 @@ use base64::Engine;
 use brotli::enc::BrotliEncoderParams;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use zstd::stream::Encoder as ZstdEncoder;
 use sha2::{Digest, Sha256};
 
 /// Map a filename's extension to its MIME type.
@@ -160,6 +161,22 @@ pub fn compress_to_brotli(data: &[u8], path: &str) -> usize {
     brotli::BrotliCompress(&mut &data[..], &mut out, &params).expect("brotli compress failed");
     let compressed_len = out.len();
     fs::write(path, &out).expect("failed to write brotli file");
+    compressed_len
+}
+
+/// Zstandard-compress `data` at the highest compression level (level 22).
+/// Writes the compressed output to `path`.
+/// Returns the size of the compressed output.
+pub fn compress_to_zstd(data: &[u8], path: &str) -> usize {
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent).expect("failed to create zstd parent directory");
+    }
+    let mut out = Vec::with_capacity(data.len());
+    let mut encoder = ZstdEncoder::new(&mut out, 22).expect("zstd encoder create failed");
+    encoder.write_all(data).expect("zstd write failed");
+    encoder.finish().expect("zstd finish failed");
+    let compressed_len = out.len();
+    fs::write(path, &out).expect("failed to write zstd file");
     compressed_len
 }
 
@@ -345,6 +362,28 @@ mod tests {
 
         let gz = fs::read(&gz_path).unwrap();
         assert_eq!(&gz[..2], &[0x1F, 0x8B]); // gzip magic bytes
+    }
+
+    // ── compress_to_zstd: valid output, decompressible ──────────
+
+    #[test]
+    fn compress_to_zstd_produces_valid_output() {
+        let dir = tempdir().unwrap();
+        let zst_path = dir.path().join("test.zst").to_str().unwrap().to_string();
+
+        let chunk = b"Hello, world! This is test data for zstd compression. ";
+        let data: Vec<u8> = chunk.repeat(10);
+        let len = compress_to_zstd(&data, &zst_path);
+
+        assert!(len > 0);
+        assert!(len < data.len()); // should compress on larger input
+
+        let zst_data = fs::read(&zst_path).unwrap();
+        // Verify zstd magic bytes
+        assert_eq!(&zst_data[..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+        // Decompress and verify round-trip
+        let decompressed = zstd::decode_all(&zst_data[..]).expect("zstd decompress failed");
+        assert_eq!(decompressed, data);
     }
 
     // ── compress_to_brotli: valid output, decompressible ──────────

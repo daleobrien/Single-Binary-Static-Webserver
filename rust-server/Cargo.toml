@@ -28,12 +28,14 @@ rcgen = "0.13"
 rustls-pemfile = "2"
 sha2 = "0.11"
 base64 = "0.22"
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 sha2 = "0.11"
 base64 = "0.22"
 flate2 = "1"
 brotli = "7"
+zstd = { version = "0.13", default-features = false }
 minify-html = "0.18"
 css-minify = "0.5"
 minify-js = "0.6"

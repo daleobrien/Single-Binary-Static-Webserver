@@ -7,17 +7,19 @@ use crate::build_helpers::utils;
 
 /// Process HTML: inject the version-check script, add SRI integrity attributes
 /// to <link>/<script>/<img> tags (keeping original filenames), then minify and
-/// compress with both gzip and brotli.
+/// compress with gzip, brotli, and zstd.
 pub(super) fn update_html_sri_and_inject_update_js(
     files: &[String],
     file_hashes: &mut HashMap<String, String>,
     version_script_tag: &str,
     gzip_dir: &str,
     br_dir: &str,
+    zst_dir: &str,
     uncompressed_lens: &mut HashMap<String, usize>,
     original_lens: &mut HashMap<String, usize>,
     gzip_lens: &mut HashMap<String, usize>,
     br_lens: &mut HashMap<String, usize>,
+    zst_lens: &mut HashMap<String, usize>,
     disable_sri: bool,
 ) {
     for file in files {
@@ -74,5 +76,9 @@ pub(super) fn update_html_sri_and_inject_update_js(
         let br_len =
             utils::compress_to_brotli(&minified, &format!("{br_dir}/{file}.br"));
         br_lens.insert(file.clone(), br_len);
+
+        let zst_len =
+            utils::compress_to_zstd(&minified, &format!("{zst_dir}/{file}.zst"));
+        zst_lens.insert(file.clone(), zst_len);
     }
 }

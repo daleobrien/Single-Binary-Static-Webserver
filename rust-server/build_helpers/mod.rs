@@ -31,6 +31,7 @@ pub fn run() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let gzip_dir = format!("{out_dir}/gzip");
     let br_dir = format!("{out_dir}/brotli");
+    let zst_dir = format!("{out_dir}/zstd");
 
     // Clean and recreate the gzip output directory
     let _ = std::fs::remove_dir_all(&gzip_dir);
@@ -39,6 +40,10 @@ pub fn run() {
     // Clean and recreate the brotli output directory
     let _ = std::fs::remove_dir_all(&br_dir);
     std::fs::create_dir_all(&br_dir).expect("failed to create brotli dir");
+
+    // Clean and recreate the zstd output directory
+    let _ = std::fs::remove_dir_all(&zst_dir);
+    std::fs::create_dir_all(&zst_dir).expect("failed to create zstd dir");
 
     // ── Generate server configuration constants ──
     config_gen::generate(&out_dir);
@@ -72,14 +77,17 @@ pub fn run() {
     let mut original_lens: HashMap<String, usize> = HashMap::new();
     let mut gzip_lens: HashMap<String, usize> = HashMap::new();
     let mut br_lens: HashMap<String, usize> = HashMap::new();
+    let mut zst_lens: HashMap<String, usize> = HashMap::new();
     let mut file_hashes = minify_compute_sha_and_compress(
         &files,
         &gzip_dir,
         &br_dir,
+        &zst_dir,
         &mut uncompressed_lens,
         &mut original_lens,
         &mut gzip_lens,
         &mut br_lens,
+        &mut zst_lens,
     );
     update_html_sri_and_inject_update_js(
         &files,
@@ -87,15 +95,17 @@ pub fn run() {
         &version_script_tag,
         &gzip_dir,
         &br_dir,
+        &zst_dir,
         &mut uncompressed_lens,
         &mut original_lens,
         &mut gzip_lens,
         &mut br_lens,
+        &mut zst_lens,
         disable_sri,
     );
 
     // ── Print build summary ──
-    print_build_summary(&files, &original_lens, &uncompressed_lens, &gzip_lens, &br_lens);
+    print_build_summary(&files, &original_lens, &uncompressed_lens, &gzip_lens, &br_lens, &zst_lens);
 
     // ── Security headers (CSP is built per-file in build_asset_metadata) ──
     let security_headers = build_non_csp_headers();
@@ -118,12 +128,14 @@ pub fn run() {
         has_404,
         use_uncompressed,
         use_brotli,
+        use_zstd,
         not_found_const_prefix,
         uncompressed_lengths,
     ) = build_asset_metadata(
         &files,
         &gzip_dir,
         &br_dir,
+        &zst_dir,
         &security_headers,
         &file_hashes,
         &csp_values,
@@ -133,8 +145,8 @@ pub fn run() {
     );
 
     // ── Version asset ──
-    let (version_header_idx, version_len, version_use_uncompressed, version_use_brotli, mut header_sets, version_uncompressed_len) =
-        build_version_headers(&build_version, &gzip_dir, &br_dir, header_sets);
+    let (version_header_idx, version_len, version_use_uncompressed, version_use_brotli, version_use_zstd, mut header_sets, version_uncompressed_len) =
+        build_version_headers(&build_version, &gzip_dir, &br_dir, &zst_dir, header_sets);
 
     let not_found_header_idx = if !has_404 {
         let (idx, hs) = build_not_found_headers(&security_headers, header_sets, &build_version);
@@ -151,6 +163,7 @@ pub fn run() {
         out_dir,
         gzip_dir,
         br_dir,
+        zst_dir,
         build_version,
         assets,
         asset_header_indices,
@@ -163,8 +176,10 @@ pub fn run() {
         has_404,
         use_uncompressed,
         use_brotli,
+        use_zstd,
         version_use_uncompressed,
         version_use_brotli,
+        version_use_zstd,
         uncompressed_lengths,
         version_uncompressed_len,
     };
@@ -172,22 +187,24 @@ pub fn run() {
 }
 
 /// Print a summary table of each processed file showing original size, minified
-/// size, gzip size, brotli size, and overall compression ratio.
+/// size, gzip size, brotli size, zstd size, and overall compression ratio.
 fn print_build_summary(
     files: &[String],
     original_lens: &HashMap<String, usize>,
     uncompressed_lens: &HashMap<String, usize>,
     gzip_lens: &HashMap<String, usize>,
     br_lens: &HashMap<String, usize>,
+    zst_lens: &HashMap<String, usize>,
 ) {
-    let mut entries: Vec<(&String, usize, usize, usize, usize)> = files
+    let mut entries: Vec<(&String, usize, usize, usize, usize, usize)> = files
         .iter()
         .filter_map(|f| {
             let orig = *original_lens.get(f)?;
             let uncomp = *uncompressed_lens.get(f)?;
             let gz = *gzip_lens.get(f)?;
             let br = *br_lens.get(f)?;
-            Some((f, orig, uncomp, gz, br))
+            let zst = *zst_lens.get(f)?;
+            Some((f, orig, uncomp, gz, br, zst))
         })
         .collect();
 
@@ -202,13 +219,16 @@ fn print_build_summary(
     let total_orig: usize = entries.iter().map(|e| e.1).sum();
     let total_gz: usize = entries.iter().map(|e| e.3).sum();
     let total_br: usize = entries.iter().map(|e| e.4).sum();
+    let total_zst: usize = entries.iter().map(|e| e.5).sum();
 
     // Determine best encoding totals (what will actually be served).
     let total_best: usize = entries
         .iter()
-        .map(|(_, _, uncomp, gz, br)| {
-            if *uncomp <= *gz && *uncomp <= *br {
+        .map(|(_, _, uncomp, gz, br, zst)| {
+            if *uncomp <= *gz && *uncomp <= *br && *uncomp <= *zst {
                 *uncomp
+            } else if *zst <= *gz && *zst <= *br {
+                *zst
             } else if *br <= *gz {
                 *br
             } else {
@@ -219,51 +239,48 @@ fn print_build_summary(
 
     println!("\n========== Build Summary ==========");
     println!(
-        "{:<40} {:>10} {:>10} {:>10} {:>10} {:>10}",
-        "File", "Original", "Minified", "Gzip", "Brotli", "Best"
+        "{:<40} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "File", "Original", "Minified", "Gzip", "Brotli", "Zstd", "Best"
     );
-    println!("{:-<96}", "");
+    println!("{:-<106}", "");
 
-    for (file, orig, uncomp, gz, br) in &entries {
-        let best = if *uncomp <= *gz && *uncomp <= *br {
-            *uncomp
+    for (file, orig, uncomp, gz, br, zst) in &entries {
+        let (best, best_label) = if *uncomp <= *gz && *uncomp <= *br && *uncomp <= *zst {
+            (*uncomp, "")
+        } else if *zst <= *gz && *zst <= *br {
+            (*zst, "zst")
         } else if *br <= *gz {
-            *br
+            (*br, "br")
         } else {
-            *gz
-        };
-        let best_label = if *uncomp <= *gz && *uncomp <= *br {
-            ""
-        } else if *br <= *gz {
-            "br"
-        } else {
-            "gz"
+            (*gz, "gz")
         };
         println!(
-            "{:<40} {:>10} {:>10} {:>10} {:>10} {:>9} {}",
+            "{:<40} {:>10} {:>10} {:>10} {:>10} {:>10} {:>9} {}",
             truncate_str(file, 40),
             format_bytes(*orig),
             format_bytes(*uncomp),
             format_bytes(*gz),
             format_bytes(*br),
+            format_bytes(*zst),
             format_bytes(best),
             best_label
         );
     }
 
-    println!("{:-<96}", "");
+    println!("{:-<106}", "");
     let overall_ratio = if total_orig > 0 {
         (total_best as f64 / total_orig as f64) * 100.0
     } else {
         100.0
     };
     println!(
-        "{:<40} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "{:<40} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
         "TOTAL",
         format_bytes(total_orig),
         "",
         format_bytes(total_gz),
         format_bytes(total_br),
+        format_bytes(total_zst),
         format_bytes(total_best)
     );
     println!(

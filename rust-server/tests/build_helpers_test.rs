@@ -28,6 +28,7 @@ mod codegen_tests {
             out_dir: out_dir.to_string(),
             gzip_dir: gzip_dir.to_string(),
             br_dir: gzip_dir.to_string(),
+            zst_dir: gzip_dir.to_string(),
             build_version: "test-version-hash".to_string(),
             assets: vec![AssetGen {
                 const_prefix: "INDEX_HTML".to_string(),
@@ -44,8 +45,10 @@ mod codegen_tests {
             has_404: false,
             use_uncompressed: vec![false],
             use_brotli: vec![false],
+            use_zstd: vec![false],
             version_use_uncompressed: true,
             version_use_brotli: false,
+            version_use_zstd: false,
             uncompressed_lengths: vec![1024],
             version_uncompressed_len: 9,
         }

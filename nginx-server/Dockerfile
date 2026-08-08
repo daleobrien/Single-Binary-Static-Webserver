@@ -1,7 +1,7 @@
-FROM nginx:alpine
+FROM nginx:alpine-slim
 
-COPY nginx-server/default.conf /etc/nginx/conf.d/default.conf
-COPY public/ /usr/share/nginx/html/
+COPY --chown=nginx:nginx nginx-server/default.conf /etc/nginx/conf.d/default.conf
+COPY --chown=nginx:nginx public/ /usr/share/nginx/html/
 
 EXPOSE 3000
 

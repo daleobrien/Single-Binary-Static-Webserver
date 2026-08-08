@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+.github
+
+# Dependencies
+node_modules
+
+# Build artifacts
+react-app/build
+react-app/dist
+rust-server/target
+node-server/node_modules
+
+# Development files
+*.md
+!README.md
+go.sh
+verify.sh
+test-env-params.sh
+
+# Certificates (not needed in nginx image)
+certs/
+
+# IDE / Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

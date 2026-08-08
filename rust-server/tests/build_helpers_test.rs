@@ -19,16 +19,12 @@ mod csp;
 #[cfg(test)]
 mod codegen_tests {
     use super::codegen::{self, AssetGen, CodegenCtx};
-    use std::fs;
     use tempfile::tempdir;
 
     /// Helper to build a minimal CodegenCtx for testing.
-    fn minimal_ctx(out_dir: &str, gzip_dir: &str) -> CodegenCtx {
+    fn minimal_ctx(out_dir: &str) -> CodegenCtx {
         CodegenCtx {
             out_dir: out_dir.to_string(),
-            gzip_dir: gzip_dir.to_string(),
-            br_dir: gzip_dir.to_string(),
-            zst_dir: gzip_dir.to_string(),
             build_version: "test-version-hash".to_string(),
             assets: vec![AssetGen {
                 const_prefix: "INDEX_HTML".to_string(),
@@ -38,17 +34,10 @@ mod codegen_tests {
             asset_header_indices: vec![0],
             header_sets: vec![vec![("content-type".to_string(), "text/html".to_string())]],
             version_header_idx: 1,
-            version_len: 9,
             not_found_header_idx: 2,
             not_found_const_prefix: None,
             files: vec!["index.html".to_string()],
             has_404: false,
-            use_uncompressed: vec![false],
-            use_brotli: vec![false],
-            use_zstd: vec![false],
-            version_use_uncompressed: true,
-            version_use_brotli: false,
-            version_use_zstd: false,
             uncompressed_lengths: vec![1024],
             version_uncompressed_len: 9,
             gzip_lengths: vec![500],
@@ -60,186 +49,227 @@ mod codegen_tests {
         }
     }
 
-    // ── Asset struct includes content_length_str ──────────────────
+    // ── Asset struct includes all variant body fields ─────────────
 
     #[test]
-    fn asset_struct_includes_content_length_str_field() {
+    fn asset_struct_includes_variant_body_fields() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        // Create a minimal gzip body file for index.html
-        fs::write(gzip_dir.join("index.html.gz"), b"dummy-gzip-body").unwrap();
-
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
-        // Asset struct should declare content_length_str and headers
         assert!(
-            generated.contains("pub content_length_str: &'static str,"),
-            "Asset struct must include content_length_str field.\nGenerated:\n{generated}"
+            generated.contains("pub body: &'static [u8],"),
+            "Asset struct must include body field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub body_gzip: &'static [u8],"),
+            "Asset struct must include body_gzip field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub body_brotli: &'static [u8],"),
+            "Asset struct must include body_brotli field.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub body_zstd: &'static [u8],"),
+            "Asset struct must include body_zstd field.\nGenerated:\n{generated}"
         );
         assert!(
             generated.contains("pub headers: &'static [(&'static str, &'static str)],"),
-            "Asset struct must include headers field (static str-pair slice).\nGenerated:\n{generated}"
+            "Asset struct must include headers field.\nGenerated:\n{generated}"
         );
     }
 
-    // ── _LEN_STR constants are emitted for each asset ─────────────
+    // ── All encoding body constants are emitted per asset ─────────
 
     #[test]
-    fn asset_constants_include_len_str() {
+    fn asset_constants_include_all_encoding_bodies() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        // Create a gzip body file with known size
-        let body = b"hello-world-body";
-        fs::write(gzip_dir.join("index.html.gz"), body).unwrap();
-
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
+        // Uncompressed body
         assert!(
-            generated.contains("const INDEX_HTML_LEN: usize = 16;"),
-            "INDEX_HTML_LEN must match the body size.\nGenerated:\n{generated}"
+            generated.contains("const INDEX_HTML_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/index.html.gz.raw\"));"),
+            "Must embed uncompressed body.\nGenerated:\n{generated}"
+        );
+        // Gzip body
+        assert!(
+            generated.contains("const INDEX_HTML_BODY_GZIP: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/index.html.gz\"));"),
+            "Must embed gzip body.\nGenerated:\n{generated}"
+        );
+        // Brotli body
+        assert!(
+            generated.contains("const INDEX_HTML_BODY_BROTLI: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/brotli/index.html.br\"));"),
+            "Must embed brotli body.\nGenerated:\n{generated}"
+        );
+        // Zstd body
+        assert!(
+            generated.contains("const INDEX_HTML_BODY_ZSTD: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/zstd/index.html.zst\"));"),
+            "Must embed zstd body.\nGenerated:\n{generated}"
+        );
+
+        // Lengths from the context
+        assert!(
+            generated.contains("const INDEX_HTML_UNCOMPRESSED_LEN: usize = 1024;"),
+            "INDEX_HTML_UNCOMPRESSED_LEN must match context.\nGenerated:\n{generated}"
         );
         assert!(
-            generated.contains("const INDEX_HTML_LEN_STR: &str = \"16\";"),
-            "INDEX_HTML_LEN_STR must be the string form of the length.\nGenerated:\n{generated}"
+            generated.contains("const INDEX_HTML_GZIP_LEN: usize = 500;"),
+            "INDEX_HTML_GZIP_LEN must match context.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const INDEX_HTML_BROTLI_LEN: usize = 450;"),
+            "INDEX_HTML_BROTLI_LEN must match context.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const INDEX_HTML_ZSTD_LEN: usize = 430;"),
+            "INDEX_HTML_ZSTD_LEN must match context.\nGenerated:\n{generated}"
         );
     }
 
-    // ── VERSION_LEN_STR is emitted ─────────────────────────────────
+    // ── Version asset includes all variant bodies ─────────────────
 
     #[test]
-    fn version_asset_includes_len_str() {
+    fn version_asset_includes_all_variant_bodies() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        // write_asset_constants stats every file in ctx.files, so provide a dummy
-        fs::write(gzip_dir.join("index.html.gz"), b"x").unwrap();
-
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
         assert!(
-            generated.contains("const VERSION_LEN: usize = 9;"),
-            "VERSION_LEN must match version_len from ctx.\nGenerated:\n{generated}"
+            generated.contains("const VERSION_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/v.txt.gz.raw\"));"),
+            "Must embed version uncompressed body.\nGenerated:\n{generated}"
         );
         assert!(
-            generated.contains("const VERSION_LEN_STR: &str = \"9\";"),
-            "VERSION_LEN_STR must be the string form.\nGenerated:\n{generated}"
+            generated.contains("const VERSION_BODY_GZIP: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/v.txt.gz\"));"),
+            "Must embed version gzip body.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const VERSION_BODY_BROTLI: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/brotli/v.txt.br\"));"),
+            "Must embed version brotli body.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const VERSION_BODY_ZSTD: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/zstd/v.txt.zst\"));"),
+            "Must embed version zstd body.\nGenerated:\n{generated}"
+        );
+
+        assert!(
+            generated.contains("const VERSION_UNCOMPRESSED_LEN: usize = 9;"),
+            "VERSION_UNCOMPRESSED_LEN must match context.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const VERSION_GZIP_LEN: usize = 50;"),
+            "VERSION_GZIP_LEN must match context.\nGenerated:\n{generated}"
         );
     }
 
-    // ── NOT_FOUND_LEN_STR is emitted (inline fallback path) ────────
+    // ── 404 fallback asset has all bodies pointing to same bytes ──
 
     #[test]
-    fn not_found_asset_includes_len_str_inline_fallback() {
+    fn not_found_asset_all_variants_same_body() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        // write_asset_constants stats every file in ctx.files, so provide a dummy
-        fs::write(gzip_dir.join("index.html.gz"), b"x").unwrap();
-
-        // has_404 = false → inline fallback body: b"<h1>404 - Not Found</h1>" (24 bytes)
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
+        // All 404 body variants use the same inline bytes
         assert!(
-            generated.contains("const NOT_FOUND_LEN: usize = 24;"),
-            "NOT_FOUND_LEN must be 24 (length of inline 404 body).\nGenerated:\n{generated}"
+            generated.contains("const NOT_FOUND_BODY: &[u8] = b\"<h1>404 - Not Found</h1>\";"),
+            "NOT_FOUND_BODY must be the inline 404 HTML.\nGenerated:\n{generated}"
         );
         assert!(
-            generated.contains("const NOT_FOUND_LEN_STR: &str = \"24\";"),
-            "NOT_FOUND_LEN_STR must be the string form.\nGenerated:\n{generated}"
+            generated.contains("const NOT_FOUND_BODY_GZIP: &[u8] = b\"<h1>404 - Not Found</h1>\";"),
+            "NOT_FOUND_BODY_GZIP must match NOT_FOUND_BODY.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const NOT_FOUND_BODY_BROTLI: &[u8] = b\"<h1>404 - Not Found</h1>\";"),
+            "NOT_FOUND_BODY_BROTLI must match NOT_FOUND_BODY.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("const NOT_FOUND_BODY_ZSTD: &[u8] = b\"<h1>404 - Not Found</h1>\";"),
+            "NOT_FOUND_BODY_ZSTD must match NOT_FOUND_BODY.\nGenerated:\n{generated}"
         );
     }
 
-    // ── Asset instances initialize content_length_str ──────────────
+    // ── Asset instances initialize all variant body fields ────────
 
     #[test]
-    fn asset_instances_initialize_content_length_str() {
+    fn asset_instances_initialize_variant_bodies() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        fs::write(gzip_dir.join("index.html.gz"), b"dummy-gzip-body").unwrap();
-
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
         // File asset instance
         assert!(
-            generated.contains("content_length_str: INDEX_HTML_LEN_STR,"),
-            "Asset instance must initialize content_length_str from INDEX_HTML_LEN_STR.\nGenerated:\n{generated}"
+            generated.contains("body_gzip: INDEX_HTML_BODY_GZIP,"),
+            "Asset instance must initialize body_gzip.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("body_brotli: INDEX_HTML_BODY_BROTLI,"),
+            "Asset instance must initialize body_brotli.\nGenerated:\n{generated}"
+        );
+        assert!(
+            generated.contains("body_zstd: INDEX_HTML_BODY_ZSTD,"),
+            "Asset instance must initialize body_zstd.\nGenerated:\n{generated}"
         );
         assert!(
             generated.contains("headers: HEADERS_0,"),
             "Asset instance must initialize headers from HEADERS_0.\nGenerated:\n{generated}"
         );
+
         // Version asset instance
         assert!(
-            generated.contains("content_length_str: VERSION_LEN_STR,"),
-            "VERSION_ASSET must initialize content_length_str from VERSION_LEN_STR.\nGenerated:\n{generated}"
+            generated.contains("body_gzip: VERSION_BODY_GZIP,"),
+            "VERSION_ASSET must initialize body_gzip.\nGenerated:\n{generated}"
         );
+        assert!(
+            generated.contains("body_brotli: VERSION_BODY_BROTLI,"),
+            "VERSION_ASSET must initialize body_brotli.\nGenerated:\n{generated}"
+        );
+
         // 404 asset instance
         assert!(
-            generated.contains("content_length_str: NOT_FOUND_LEN_STR,"),
-            "NOT_FOUND_ASSET must initialize content_length_str from NOT_FOUND_LEN_STR.\nGenerated:\n{generated}"
+            generated.contains("body_gzip: NOT_FOUND_BODY_GZIP,"),
+            "NOT_FOUND_ASSET must initialize body_gzip.\nGenerated:\n{generated}"
         );
     }
 
-    // ── End-to-end: all constants and struct are consistent ────────
+    // ── Generated output does not reference removed fields ────────
 
     #[test]
-    fn generated_output_is_self_consistent() {
+    fn generated_output_has_no_len_str() {
         let dir = tempdir().unwrap();
         let out_dir = dir.path().to_str().unwrap();
-        let gzip_dir = dir.path().join("gzip");
-        fs::create_dir_all(&gzip_dir).unwrap();
-
-        fs::write(gzip_dir.join("index.html.gz"), b"a").unwrap(); // 1 byte
-
-        let ctx = minimal_ctx(out_dir, gzip_dir.to_str().unwrap());
-
+        let ctx = minimal_ctx(out_dir);
         codegen::generate(&ctx);
 
-        let generated = fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
+        let generated = std::fs::read_to_string(format!("{out_dir}/generated.rs")).unwrap();
 
-        // The LEN_STR must contain the same value as LEN (as a string)
-        assert!(generated.contains("const INDEX_HTML_LEN: usize = 1;"));
-        assert!(generated.contains("const INDEX_HTML_LEN_STR: &str = \"1\""));
-
-        // The struct definition, instance initialization, and the _LEN_STR constant
-        // must all reference the same identifier pattern
-        let len_str_count = generated.matches("_LEN_STR").count();
-        // Expected: 1 declaration + 1 instance usage = 2, plus VERSION and NOT_FOUND:
-        // INDEX_HTML_LEN_STR declaration + usage = 2
-        // VERSION_LEN_STR declaration + usage = 2
-        // NOT_FOUND_LEN_STR declaration + usage = 2
-        // Total = 6
-        assert_eq!(
-            len_str_count, 6,
-            "Expected exactly 6 occurrences of _LEN_STR (3 decls + 3 usages).\nGenerated:\n{generated}"
+        // content_length_str and _LEN_STR are removed
+        assert!(
+            !generated.contains("content_length_str"),
+            "Generated code must not contain content_length_str.\nGenerated:\n{generated}"
+        );
+        assert!(
+            !generated.contains("_LEN_STR"),
+            "Generated code must not contain _LEN_STR.\nGenerated:\n{generated}"
+        );
+        assert!(
+            !generated.contains("content_length:"),
+            "Generated code must not contain content_length: field.\nGenerated:\n{generated}"
         );
     }
 }

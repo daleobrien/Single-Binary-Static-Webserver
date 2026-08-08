@@ -13,25 +13,15 @@ pub struct AssetGen {
 /// All the data needed by the code generator.
 pub struct CodegenCtx {
     pub out_dir: String,
-    pub gzip_dir: String,
-    pub br_dir: String,
-    pub zst_dir: String,
     pub build_version: String,
     pub assets: Vec<AssetGen>,
     pub asset_header_indices: Vec<usize>,
     pub header_sets: Vec<Vec<(String, String)>>,
     pub version_header_idx: usize,
-    pub version_len: usize,
     pub not_found_header_idx: usize,
     pub not_found_const_prefix: Option<String>,
     pub files: Vec<String>,
     pub has_404: bool,
-    pub use_uncompressed: Vec<bool>,
-    pub use_brotli: Vec<bool>,
-    pub use_zstd: Vec<bool>,
-    pub version_use_uncompressed: bool,
-    pub version_use_brotli: bool,
-    pub version_use_zstd: bool,
     pub uncompressed_lengths: Vec<usize>,
     pub version_uncompressed_len: usize,
     pub gzip_lengths: Vec<usize>,
@@ -84,20 +74,23 @@ pub fn generate(ctx: &CodegenCtx) {
     println!("cargo:rerun-if-changed=../public/");
 }
 
+// ── write_build_version ──────────────────────────────────────────────
+
 fn write_build_version(g: &mut fs::File, build_version: &str) {
     writeln!(
         g,
-        "/// Build fingerprint — changes whenever any file in public/ changes."
+        "/// Build version hash, used as an ETag for conditional requests."
     )
     .unwrap();
     writeln!(
         g,
-        "/// Used by the inline version-check script injected into every HTML page."
+        "pub const BUILD_VERSION: &str = \"{build_version}\";"
     )
     .unwrap();
-    writeln!(g, "pub const BUILD_VERSION: &str = \"{build_version}\";").unwrap();
     writeln!(g).unwrap();
 }
+
+// ── write_tls_config ─────────────────────────────────────────────────
 
 fn write_tls_config(g: &mut fs::File) {
     writeln!(
@@ -190,34 +183,21 @@ fn write_tls_config(g: &mut fs::File) {
     writeln!(g).unwrap();
 }
 
-/// Write per-asset BODY/LEN/TYPE constants.
+// ── write_asset_constants ────────────────────────────────────────────
+
 fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
     for (i, file) in ctx.files.iter().enumerate() {
-        let suffix = if ctx.use_uncompressed[i] {
-            ".gz.raw"
-        } else if ctx.use_zstd[i] {
-            ".zst"
-        } else if ctx.use_brotli[i] {
-            ".br"
-        } else {
-            ".gz"
-        };
-        let embed_name = format!("{file}{suffix}");
-        let embed_path = if ctx.use_zstd[i] {
-            format!("{}/{}", ctx.zst_dir, embed_name)
-        } else if ctx.use_brotli[i] {
-            format!("{}/{}", ctx.br_dir, embed_name)
-        } else {
-            format!("{}/{}", ctx.gzip_dir, embed_name)
-        };
-        let content_length = fs::metadata(&embed_path)
-            .expect("failed to stat body file")
-            .len() as usize;
         let content_type = utils::mime_for_file(file);
         let const_prefix = utils::file_to_const(file);
         let uncompressed_len = ctx.uncompressed_lengths[i];
+        let gzip_len = ctx.gzip_lengths[i];
+        let brotli_len = ctx.brotli_lengths[i];
+        let zstd_len = ctx.zstd_lengths[i];
+
+        // Compute savings percentage using the best (smallest) encoding.
+        let best_compressed = gzip_len.min(brotli_len).min(zstd_len).min(uncompressed_len);
         let savings_pct = if uncompressed_len > 0 {
-            (uncompressed_len - content_length) * 100 / uncompressed_len
+            (uncompressed_len - best_compressed) * 100 / uncompressed_len
         } else {
             0
         };
@@ -227,28 +207,36 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
             "// ── {file} ──────────────────────────────────────────────"
         )
         .unwrap();
-        let include_dir = if ctx.use_zstd[i] {
-            "zstd"
-        } else if ctx.use_brotli[i] {
-            "brotli"
-        } else {
-            "gzip"
-        };
+
+        // Uncompressed body (from the .gz.raw copy created by compress_to_gzip).
         writeln!(
             g,
-            "const {const_prefix}_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{include_dir}/{embed_name}\"));"
+            "const {const_prefix}_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{file}.gz.raw\"));"
         )
         .unwrap();
-        writeln!(g, "const {const_prefix}_LEN: usize = {content_length};").unwrap();
+        // Gzip-compressed body.
         writeln!(
             g,
-            "const {const_prefix}_LEN_STR: &str = \"{content_length}\";"
+            "const {const_prefix}_BODY_GZIP: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/{file}.gz\"));"
         )
         .unwrap();
+        // Brotli-compressed body.
+        writeln!(
+            g,
+            "const {const_prefix}_BODY_BROTLI: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/brotli/{file}.br\"));"
+        )
+        .unwrap();
+        // Zstd-compressed body.
+        writeln!(
+            g,
+            "const {const_prefix}_BODY_ZSTD: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/zstd/{file}.zst\"));"
+        )
+        .unwrap();
+
         writeln!(g, "const {const_prefix}_UNCOMPRESSED_LEN: usize = {uncompressed_len};").unwrap();
-        writeln!(g, "const {const_prefix}_GZIP_LEN: usize = {};", ctx.gzip_lengths[i]).unwrap();
-        writeln!(g, "const {const_prefix}_BROTLI_LEN: usize = {};", ctx.brotli_lengths[i]).unwrap();
-        writeln!(g, "const {const_prefix}_ZSTD_LEN: usize = {};", ctx.zstd_lengths[i]).unwrap();
+        writeln!(g, "const {const_prefix}_GZIP_LEN: usize = {gzip_len};").unwrap();
+        writeln!(g, "const {const_prefix}_BROTLI_LEN: usize = {brotli_len};").unwrap();
+        writeln!(g, "const {const_prefix}_ZSTD_LEN: usize = {zstd_len};").unwrap();
         writeln!(g, "const {const_prefix}_SAVINGS_PCT: usize = {savings_pct};").unwrap();
         writeln!(g, "const {const_prefix}_TYPE: &str = \"{content_type}\";").unwrap();
         writeln!(g, "const {const_prefix}_FILE: &str = \"{file}\";").unwrap();
@@ -256,35 +244,51 @@ fn write_asset_constants(g: &mut fs::File, ctx: &CodegenCtx) {
     }
 }
 
+// ── write_version_asset ──────────────────────────────────────────────
+
 fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
-    let embed_name = if ctx.version_use_uncompressed {
-        "v.txt.gz.raw"
-    } else if ctx.version_use_zstd {
-        "v.txt.zst"
-    } else if ctx.version_use_brotli {
-        "v.txt.br"
+    let version_savings_pct = if ctx.version_uncompressed_len > 0 {
+        let best = ctx
+            .version_gzip_len
+            .min(ctx.version_brotli_len)
+            .min(ctx.version_zstd_len)
+            .min(ctx.version_uncompressed_len);
+        (ctx.version_uncompressed_len - best) * 100 / ctx.version_uncompressed_len
     } else {
-        "v.txt.gz"
+        0
     };
-    let include_dir = if ctx.version_use_zstd {
-        "zstd"
-    } else if ctx.version_use_brotli {
-        "brotli"
-    } else {
-        "gzip"
-    };
+
     writeln!(
         g,
         "// ── /version (build fingerprint) ────────────────────────"
     )
     .unwrap();
+
+    // Uncompressed body.
     writeln!(
         g,
-        "const VERSION_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{include_dir}/{embed_name}\"));"
+        "const VERSION_BODY: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/v.txt.gz.raw\"));"
     )
     .unwrap();
-    writeln!(g, "const VERSION_LEN: usize = {};", ctx.version_len).unwrap();
-    writeln!(g, "const VERSION_LEN_STR: &str = \"{}\";", ctx.version_len).unwrap();
+    // Gzip body.
+    writeln!(
+        g,
+        "const VERSION_BODY_GZIP: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gzip/v.txt.gz\"));"
+    )
+    .unwrap();
+    // Brotli body.
+    writeln!(
+        g,
+        "const VERSION_BODY_BROTLI: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/brotli/v.txt.br\"));"
+    )
+    .unwrap();
+    // Zstd body.
+    writeln!(
+        g,
+        "const VERSION_BODY_ZSTD: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/zstd/v.txt.zst\"));"
+    )
+    .unwrap();
+
     writeln!(
         g,
         "const VERSION_UNCOMPRESSED_LEN: usize = {};",
@@ -309,11 +313,6 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
         ctx.version_zstd_len
     )
     .unwrap();
-    let version_savings_pct = if ctx.version_uncompressed_len > 0 {
-        (ctx.version_uncompressed_len - ctx.version_len) * 100 / ctx.version_uncompressed_len
-    } else {
-        0
-    };
     writeln!(
         g,
         "const VERSION_SAVINGS_PCT: usize = {};",
@@ -333,6 +332,8 @@ fn write_version_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g).unwrap();
 }
 
+// ── write_not_found_asset ─────────────────────────────────────────────
+
 fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
     // Only generate a separate NOT_FOUND asset when there's no real 404.html.
     // When 404.html exists, it goes through the regular asset pipeline and is
@@ -351,9 +352,12 @@ fn write_not_found_asset(g: &mut fs::File, ctx: &CodegenCtx) {
         "// ── 404 Not Found (inline fallback) ────────────────────"
     )
     .unwrap();
+    // All encoding variants point to the same uncompressed body
+    // since the inline 404 is tiny and not worth compressing.
     writeln!(g, "const NOT_FOUND_BODY: &[u8] = b\"{escaped_body}\";").unwrap();
-    writeln!(g, "const NOT_FOUND_LEN: usize = {len};").unwrap();
-    writeln!(g, "const NOT_FOUND_LEN_STR: &str = \"{len}\";").unwrap();
+    writeln!(g, "const NOT_FOUND_BODY_GZIP: &[u8] = b\"{escaped_body}\";").unwrap();
+    writeln!(g, "const NOT_FOUND_BODY_BROTLI: &[u8] = b\"{escaped_body}\";").unwrap();
+    writeln!(g, "const NOT_FOUND_BODY_ZSTD: &[u8] = b\"{escaped_body}\";").unwrap();
     writeln!(
         g,
         "const NOT_FOUND_UNCOMPRESSED_LEN: usize = {len};",
@@ -404,16 +408,30 @@ fn write_static_header_slices(g: &mut fs::File, header_sets: &[Vec<(String, Stri
     }
 }
 
+// ── write_asset_struct ───────────────────────────────────────────────
+
 fn write_asset_struct(g: &mut fs::File) {
     writeln!(
         g,
         "/// A pre-built static asset — every field is compile-time constant."
     )
     .unwrap();
+    writeln!(g, "///").unwrap();
+    writeln!(
+        g,
+        "/// Holds all encoding variants so the server can perform runtime"
+    )
+    .unwrap();
+    writeln!(
+        g,
+        "/// `Accept-Encoding` negotiation and serve the best match."
+    )
+    .unwrap();
     writeln!(g, "pub struct Asset {{").unwrap();
     writeln!(g, "    pub body: &'static [u8],").unwrap();
-    writeln!(g, "    pub content_length: usize,").unwrap();
-    writeln!(g, "    pub content_length_str: &'static str,").unwrap();
+    writeln!(g, "    pub body_gzip: &'static [u8],").unwrap();
+    writeln!(g, "    pub body_brotli: &'static [u8],").unwrap();
+    writeln!(g, "    pub body_zstd: &'static [u8],").unwrap();
     writeln!(g, "    pub uncompressed_length: usize,").unwrap();
     writeln!(g, "    pub gzip_length: usize,").unwrap();
     writeln!(g, "    pub brotli_length: usize,").unwrap();
@@ -427,6 +445,8 @@ fn write_asset_struct(g: &mut fs::File) {
     writeln!(g).unwrap();
 }
 
+// ── write_asset_instances ────────────────────────────────────────────
+
 fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     for (i, a) in ctx.assets.iter().enumerate() {
         let p = &a.const_prefix;
@@ -434,8 +454,9 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         let sc = a.status_code;
         writeln!(g, "static {p}_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: {p}_BODY,").unwrap();
-        writeln!(g, "    content_length: {p}_LEN,").unwrap();
-        writeln!(g, "    content_length_str: {p}_LEN_STR,").unwrap();
+        writeln!(g, "    body_gzip: {p}_BODY_GZIP,").unwrap();
+        writeln!(g, "    body_brotli: {p}_BODY_BROTLI,").unwrap();
+        writeln!(g, "    body_zstd: {p}_BODY_ZSTD,").unwrap();
         writeln!(g, "    uncompressed_length: {p}_UNCOMPRESSED_LEN,").unwrap();
         writeln!(g, "    gzip_length: {p}_GZIP_LEN,").unwrap();
         writeln!(g, "    brotli_length: {p}_BROTLI_LEN,").unwrap();
@@ -452,8 +473,9 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     // version asset
     writeln!(g, "static VERSION_ASSET: Asset = Asset {{").unwrap();
     writeln!(g, "    body: VERSION_BODY,").unwrap();
-    writeln!(g, "    content_length: VERSION_LEN,").unwrap();
-    writeln!(g, "    content_length_str: VERSION_LEN_STR,").unwrap();
+    writeln!(g, "    body_gzip: VERSION_BODY_GZIP,").unwrap();
+    writeln!(g, "    body_brotli: VERSION_BODY_BROTLI,").unwrap();
+    writeln!(g, "    body_zstd: VERSION_BODY_ZSTD,").unwrap();
     writeln!(g, "    uncompressed_length: VERSION_UNCOMPRESSED_LEN,").unwrap();
     writeln!(g, "    gzip_length: VERSION_GZIP_LEN,").unwrap();
     writeln!(g, "    brotli_length: VERSION_BROTLI_LEN,").unwrap();
@@ -470,8 +492,9 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
     if !ctx.has_404 {
         writeln!(g, "static NOT_FOUND_ASSET: Asset = Asset {{").unwrap();
         writeln!(g, "    body: NOT_FOUND_BODY,").unwrap();
-        writeln!(g, "    content_length: NOT_FOUND_LEN,").unwrap();
-        writeln!(g, "    content_length_str: NOT_FOUND_LEN_STR,").unwrap();
+        writeln!(g, "    body_gzip: NOT_FOUND_BODY_GZIP,").unwrap();
+        writeln!(g, "    body_brotli: NOT_FOUND_BODY_BROTLI,").unwrap();
+        writeln!(g, "    body_zstd: NOT_FOUND_BODY_ZSTD,").unwrap();
         writeln!(g, "    uncompressed_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
         writeln!(g, "    gzip_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
         writeln!(g, "    brotli_length: NOT_FOUND_UNCOMPRESSED_LEN,").unwrap();
@@ -485,6 +508,8 @@ fn write_asset_instances(g: &mut fs::File, ctx: &CodegenCtx) {
         writeln!(g).unwrap();
     }
 }
+
+// ── write_all_assets_slice ───────────────────────────────────────────
 
 fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(
@@ -503,6 +528,8 @@ fn write_all_assets_slice(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "];").unwrap();
     writeln!(g).unwrap();
 }
+
+// ── write_routing_function ───────────────────────────────────────────
 
 fn write_routing_function(g: &mut fs::File, ctx: &CodegenCtx) {
     writeln!(g, "/// Route a URL path to its pre-built static asset.").unwrap();

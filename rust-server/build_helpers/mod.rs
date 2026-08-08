@@ -124,11 +124,7 @@ pub fn run() {
         asset_header_indices,
         header_sets,
         _max_path_len,
-        _max_size,
         has_404,
-        use_uncompressed,
-        use_brotli,
-        use_zstd,
         not_found_const_prefix,
         uncompressed_lengths,
         gzip_lengths,
@@ -148,7 +144,7 @@ pub fn run() {
     );
 
     // ── Version asset ──
-    let (version_header_idx, version_len, version_use_uncompressed, version_use_brotli, version_use_zstd, mut header_sets, version_uncompressed_len, version_gzip_len, version_brotli_len, version_zstd_len) =
+    let (version_header_idx, mut header_sets, version_uncompressed_len, version_gzip_len, version_brotli_len, version_zstd_len) =
         build_version_headers(&build_version, &gzip_dir, &br_dir, &zst_dir, header_sets);
 
     let not_found_header_idx = if !has_404 {
@@ -164,25 +160,15 @@ pub fn run() {
     // ── Generate Rust source ──
     let ctx = CodegenCtx {
         out_dir,
-        gzip_dir,
-        br_dir,
-        zst_dir,
         build_version,
         assets,
         asset_header_indices,
         header_sets,
         version_header_idx,
-        version_len,
         not_found_header_idx,
         not_found_const_prefix,
         files,
         has_404,
-        use_uncompressed,
-        use_brotli,
-        use_zstd,
-        version_use_uncompressed,
-        version_use_brotli,
-        version_use_zstd,
         uncompressed_lengths,
         version_uncompressed_len,
         gzip_lengths,

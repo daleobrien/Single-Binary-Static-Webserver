@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use app::{route, response_for_asset, Asset};
+use app::{route, response_for_asset, Asset, ContentEncoding};
 
 /// Benchmark the `route` function: path → &'static Asset lookup via the
 /// compile-time-generated match statement.
@@ -39,13 +39,14 @@ fn bench_response_for_asset(c: &mut Criterion) {
     let index_asset: &Asset = route("/");
     let not_found_asset: &Asset = route("/nonexistent/path");
     let version_asset: &Asset = route("/v");
+    let encoding = ContentEncoding::Brotli;
 
     let mut group = c.benchmark_group("response_for_asset");
 
     // Small asset (index.html)
     group.bench_function("index.html", |b| {
         b.iter(|| {
-            let resp = response_for_asset(black_box(index_asset));
+            let resp = response_for_asset(black_box(index_asset), encoding);
             black_box(resp)
         });
     });
@@ -53,7 +54,7 @@ fn bench_response_for_asset(c: &mut Criterion) {
     // 404 fallback (small inline body)
     group.bench_function("404 fallback", |b| {
         b.iter(|| {
-            let resp = response_for_asset(black_box(not_found_asset));
+            let resp = response_for_asset(black_box(not_found_asset), encoding);
             black_box(resp)
         });
     });
@@ -61,7 +62,7 @@ fn bench_response_for_asset(c: &mut Criterion) {
     // Version asset
     group.bench_function("/v", |b| {
         b.iter(|| {
-            let resp = response_for_asset(black_box(version_asset));
+            let resp = response_for_asset(black_box(version_asset), encoding);
             black_box(resp)
         });
     });

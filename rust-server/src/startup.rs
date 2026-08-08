@@ -64,13 +64,18 @@ pub(crate) fn print_assets_table() {
     elog!();
     elog!(
         "{:<36} {:>9} {:>9} {:>9} {:>9} {:>9}",
-        "Route / File", "Plain", "Gzip", "Brotli", "Zstd", "Served"
+        "Route / File", "Plain", "Gzip", "Brotli", "Zstd", "Best"
     );
     elog!("{:-<81}", "");
 
     for asset in ALL_ASSETS {
-        // Determine which compression is served and compute the served size.
-        let served = asset.content_length;
+        // The "best" encoding is the smallest among all variants — this is what
+        // a client with full Accept-Encoding support would receive.
+        let best = asset
+            .uncompressed_length
+            .min(asset.gzip_length)
+            .min(asset.brotli_length)
+            .min(asset.zstd_length);
 
         elog!(
             "{:<36} {:>9} {:>9} {:>9} {:>9} {:>9}",
@@ -79,7 +84,7 @@ pub(crate) fn print_assets_table() {
             format_bytes(asset.gzip_length),
             format_bytes(asset.brotli_length),
             format_bytes(asset.zstd_length),
-            format_bytes(served),
+            format_bytes(best),
         );
     }
 
@@ -88,7 +93,16 @@ pub(crate) fn print_assets_table() {
     let total_gzip: usize = ALL_ASSETS.iter().map(|a| a.gzip_length).sum();
     let total_brotli: usize = ALL_ASSETS.iter().map(|a| a.brotli_length).sum();
     let total_zstd: usize = ALL_ASSETS.iter().map(|a| a.zstd_length).sum();
-    let total_served: usize = ALL_ASSETS.iter().map(|a| a.content_length).sum();
+    // Total of the best (smallest) encoding for each asset.
+    let total_best: usize = ALL_ASSETS
+        .iter()
+        .map(|a| {
+            a.uncompressed_length
+                .min(a.gzip_length)
+                .min(a.brotli_length)
+                .min(a.zstd_length)
+        })
+        .sum();
 
     elog!("{:-<81}", "");
     elog!(
@@ -98,10 +112,10 @@ pub(crate) fn print_assets_table() {
         format_bytes(total_gzip),
         format_bytes(total_brotli),
         format_bytes(total_zstd),
-        format_bytes(total_served),
+        format_bytes(total_best),
     );
     if total_plain > 0 {
-        let ratio = (total_served as f64 / total_plain as f64) * 100.0;
+        let ratio = (total_best as f64 / total_plain as f64) * 100.0;
         elog!("Overall compression: {:.1}% of plain size", ratio);
     }
     elog!();

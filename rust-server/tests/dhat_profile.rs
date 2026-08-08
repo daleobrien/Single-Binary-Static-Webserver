@@ -26,12 +26,13 @@ fn profile_allocations() {
     // This is the key path that was optimised to avoid HeaderMap::clone().
     let index_asset = app::route("/");
     let not_found_asset = app::route("/nonexistent");
+    let encoding = app::ContentEncoding::Brotli;
 
     for _ in 0..1000 {
-        let _resp = app::response_for_asset(index_asset);
+        let _resp = app::response_for_asset(index_asset, encoding);
     }
     for _ in 0..1000 {
-        let _resp = app::response_for_asset(not_found_asset);
+        let _resp = app::response_for_asset(not_found_asset, encoding);
     }
 
     // Build version ETag check path

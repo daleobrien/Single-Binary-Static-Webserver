@@ -11,11 +11,9 @@ pub(super) fn build_not_found_headers(
 ) -> (usize, Vec<Vec<(String, String)>>) {
     let body: &[u8] = b"<h1>404 - Not Found</h1>";
     let hash = utils::sha256_base64(body);
-    let cl = body.len().to_string();
 
     let mut not_found_headers: Vec<(String, String)> = Vec::new();
     not_found_headers.push(("content-type".into(), "text/html; charset=utf-8".into()));
-    not_found_headers.push(("content-length".into(), cl.clone()));
 
     // Locked-down CSP for the inline fallback (no external resources).
     let csp = format!(
@@ -26,7 +24,6 @@ pub(super) fn build_not_found_headers(
     not_found_headers.push(("cache-control".into(), "public, max-age=3600".into()));
     not_found_headers.push(("etag".into(), build_version.to_string()));
     not_found_headers.push(("repr-digest".into(), format!("sha-256={}", hash)));
-    not_found_headers.push(("content-digest".into(), format!("sha-256={}", hash)));
 
     // Rebuild index from existing header_sets
     let mut header_set_index: HashMap<String, usize> = HashMap::new();

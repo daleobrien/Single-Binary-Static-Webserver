@@ -9,7 +9,7 @@ pub(super) fn build_version_headers(
     br_dir: &str,
     zst_dir: &str,
     mut header_sets: Vec<Vec<(String, String)>>,
-) -> (usize, usize, bool, bool, bool, Vec<Vec<(String, String)>>, usize, usize, usize, usize) {
+) -> (usize, Vec<Vec<(String, String)>>, usize, usize, usize, usize) {
     let version_body = build_version.as_bytes().to_vec();
     let version_gz_path = format!("{gzip_dir}/v.txt.gz");
     utils::compress_to_gzip(&version_body, &version_gz_path);
@@ -20,34 +20,16 @@ pub(super) fn build_version_headers(
     let version_gz_data = fs::read(&version_gz_path).expect("failed to read version gzip");
     let version_br_data = fs::read(&version_br_path).expect("failed to read version brotli");
     let version_zst_data = fs::read(&version_zst_path).expect("failed to read version zstd");
-    let version_use_uncomp = version_body.len() < version_gz_data.len()
-        && version_body.len() < version_br_data.len()
-        && version_body.len() < version_zst_data.len();
-    let version_use_zstd = !version_use_uncomp
-        && version_zst_data.len() < version_gz_data.len()
-        && version_zst_data.len() < version_br_data.len();
-    let version_use_brotli = !version_use_uncomp
-        && !version_use_zstd
-        && version_br_data.len() < version_gz_data.len();
-    let version_len = if version_use_uncomp {
-        version_body.len()
-    } else if version_use_zstd {
-        version_zst_data.len()
-    } else if version_use_brotli {
-        version_br_data.len()
-    } else {
-        version_gz_data.len()
-    };
+
+    let version_uncompressed_len = version_body.len();
+    let version_gzip_len = version_gz_data.len();
+    let version_brotli_len = version_br_data.len();
+    let version_zstd_len = version_zst_data.len();
 
     let mut version_headers: Vec<(String, String)> = Vec::new();
     version_headers.push(("content-type".into(), "text/plain; charset=utf-8".into()));
-    if version_use_zstd {
-        version_headers.push(("content-encoding".into(), "zstd".into()));
-    } else if version_use_brotli {
-        version_headers.push(("content-encoding".into(), "br".into()));
-    } else if !version_use_uncomp {
-        version_headers.push(("content-encoding".into(), "gzip".into()));
-    }
+    // Content-Encoding is set dynamically at request time based on
+    // Accept-Encoding negotiation.
     version_headers.push((
         "cache-control".into(),
         "no-cache, no-store, must-revalidate".into(),
@@ -55,20 +37,6 @@ pub(super) fn build_version_headers(
 
     // ETag: the build version, used for conditional requests (If-None-Match → 304)
     version_headers.push(("etag".into(), build_version.to_string()));
-    // Content-Digest: SHA-256 of the body actually sent
-    let content_digest_data = if version_use_uncomp {
-        &version_body
-    } else if version_use_zstd {
-        &version_zst_data
-    } else if version_use_brotli {
-        &version_br_data
-    } else {
-        &version_gz_data
-    };
-    version_headers.push((
-        "content-digest".into(),
-        format!("sha-256={}", utils::sha256_base64(content_digest_data)),
-    ));
 
     let version_header_key = utils::header_set_key(&version_headers);
     let mut header_set_index: HashMap<String, usize> = HashMap::new();
@@ -85,18 +53,10 @@ pub(super) fn build_version_headers(
             i
         });
 
-    let version_gzip_len = version_gz_data.len();
-    let version_brotli_len = version_br_data.len();
-    let version_zstd_len = version_zst_data.len();
-
     (
         version_header_idx,
-        version_len,
-        version_use_uncomp,
-        version_use_brotli,
-        version_use_zstd,
         header_sets,
-        version_body.len(),
+        version_uncompressed_len,
         version_gzip_len,
         version_brotli_len,
         version_zstd_len,

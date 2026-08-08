@@ -21,11 +21,7 @@ pub(super) fn build_asset_metadata(
     Vec<usize>,
     Vec<Vec<(String, String)>>,
     usize,
-    usize,
     bool,
-    Vec<bool>,
-    Vec<bool>,
-    Vec<bool>,
     Option<String>,
     Vec<usize>,
     Vec<usize>,
@@ -36,13 +32,9 @@ pub(super) fn build_asset_metadata(
     let mut header_set_index: HashMap<String, usize> = HashMap::new();
     let mut assets: Vec<AssetGen> = Vec::new();
     let mut asset_header_indices: Vec<usize> = Vec::new();
-    let mut use_uncompressed: Vec<bool> = Vec::new();
-    let mut use_brotli: Vec<bool> = Vec::new();
-    let mut use_zstd: Vec<bool> = Vec::new();
     let mut has_404 = false;
     let mut not_found_const_prefix: Option<String> = None;
     let mut max_path_len: usize = 0;
-    let mut max_size: usize = 0;
     let mut uncompressed_lengths: Vec<usize> = Vec::with_capacity(files.len());
     let mut gzip_lengths: Vec<usize> = Vec::with_capacity(files.len());
     let mut brotli_lengths: Vec<usize> = Vec::with_capacity(files.len());
@@ -74,57 +66,25 @@ pub(super) fn build_asset_metadata(
         let zst_name = format!("{file}.zst");
         let zst_path = format!("{zst_dir}/{zst_name}");
         let zst_data = fs::read(&zst_path).expect("failed to read zstd file");
+
         let uncompressed_len = uncompressed_lens
             .get(file)
             .copied()
             .unwrap_or(gz_data.len());
-        // Choose the smallest among uncompressed, gzip, brotli, and zstd.
-        let use_uncomp = uncompressed_len < gz_data.len()
-            && uncompressed_len < br_data.len()
-            && uncompressed_len < zst_data.len();
-        let use_zst = !use_uncomp
-            && zst_data.len() < gz_data.len()
-            && zst_data.len() < br_data.len();
-        let use_br = !use_uncomp && !use_zst && br_data.len() < gz_data.len();
-        use_uncompressed.push(use_uncomp);
-        use_brotli.push(use_br);
-        use_zstd.push(use_zst);
 
         gzip_lengths.push(gz_data.len());
         brotli_lengths.push(br_data.len());
         zstd_lengths.push(zst_data.len());
-
-        let (body_data, content_length) = if use_uncomp {
-            let raw_path = format!("{gz_path}.raw");
-            let raw_data = fs::read(&raw_path).expect("failed to read raw file");
-            let len = raw_data.len();
-            (raw_data, len)
-        } else if use_zst {
-            let len = zst_data.len();
-            (zst_data, len)
-        } else if use_br {
-            let len = br_data.len();
-            (br_data, len)
-        } else {
-            let len = gz_data.len();
-            (gz_data, len)
-        };
-        max_size = max_size.max(content_length);
         uncompressed_lengths.push(uncompressed_len);
 
         // Per-file CSP: every directive is gated on actual page usage.
         let csp_value = csp::build_csp(file, csp_values);
 
-        // Build header set for this asset
+        // Build header set for this asset.
+        // Content-Encoding is set dynamically at request time based on
+        // Accept-Encoding negotiation, so it is not part of the static headers.
         let mut headers: Vec<(String, String)> = Vec::new();
         headers.push(("content-type".into(), content_type.into()));
-        if use_zst {
-            headers.push(("content-encoding".into(), "zstd".into()));
-        } else if use_br {
-            headers.push(("content-encoding".into(), "br".into()));
-        } else if !use_uncomp {
-            headers.push(("content-encoding".into(), "gzip".into()));
-        }
         headers.push(("content-security-policy".into(), csp_value));
         headers.extend_from_slice(security_headers);
 
@@ -140,12 +100,6 @@ pub(super) fn build_asset_metadata(
         if let Some(hash) = file_hashes.get(file) {
             headers.push(("repr-digest".into(), format!("sha-256={}", hash)));
         }
-
-        // Content-Digest: SHA-256 of the actual bytes sent over the wire
-        headers.push((
-            "content-digest".into(),
-            format!("sha-256={}", utils::sha256_base64(&body_data)),
-        ));
 
         // ETag: the build version — allows conditional requests (If-None-Match → 304)
         // for every resource, not just the /v endpoint.
@@ -172,11 +126,7 @@ pub(super) fn build_asset_metadata(
         asset_header_indices,
         header_sets,
         max_path_len,
-        max_size,
         has_404,
-        use_uncompressed,
-        use_brotli,
-        use_zstd,
         not_found_const_prefix,
         uncompressed_lengths,
         gzip_lengths,

@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use crate::config::H3_HANDLERS_PER_CONNECTION;
 use crate::error::is_client_cancel;
 use crate::logging::{LogMode, TimedBody, TimingInfo};
+use crate::response::{self, ContentEncoding};
 use crate::{route, Asset, BUILD_VERSION};
 
 // ── Protocol strings as static slices — no per-request allocation ─────
@@ -115,8 +116,9 @@ pub(crate) async fn handle_request(
 
     let asset = route(path);
     let status = asset.status_code;
-    let size = asset.content_length as u64;
-    let resp = crate::response::response_for_asset(asset);
+    let encoding = response::parse_accept_encoding(req.headers().get("accept-encoding"));
+    let size = response::content_length_for_encoding(asset, encoding);
+    let resp = crate::response::response_for_asset(asset, encoding);
     let (parts, body) = resp.into_parts();
 
     let timed = TimedBody {
@@ -191,9 +193,11 @@ async fn h3_handle_one_request<C>(
 
     let asset = route(&path);
     let status_code = asset.status_code;
-    let content_length = asset.content_length;
+    let encoding = response::parse_accept_encoding(req.headers().get("accept-encoding"));
+    let content_length = response::content_length_for_encoding(asset, encoding);
+    let body = response::body_for_encoding(asset, encoding);
 
-    let resp = h3_response_for_asset(asset);
+    let resp = h3_response_for_asset(asset, encoding);
 
     if let Err(e) = stream.send_response(resp).await {
         if !is_client_cancel(&e) {
@@ -201,9 +205,9 @@ async fn h3_handle_one_request<C>(
         }
         return;
     }
-    if !asset.body.is_empty() {
+    if !body.is_empty() {
         if let Err(e) = stream
-            .send_data(bytes::Bytes::from_static(asset.body))
+            .send_data(bytes::Bytes::from_static(body))
             .await
         {
             if !is_client_cancel(&e) {
@@ -320,26 +324,35 @@ where
 // ── Extracted h3 helpers (de-duplicate the logging and response-construction logic) ──
 
 /// Build an h3 `Response<()>` from the asset's static header slice,
-/// adding the `Content-Length` header required by h3.
+/// adding the `Content-Length` and `Content-Encoding` headers dynamically
+/// based on the negotiated encoding.
 #[inline]
-fn h3_response_for_asset(asset: &Asset) -> hyper::Response<()> {
+fn h3_response_for_asset(asset: &Asset, encoding: ContentEncoding) -> hyper::Response<()> {
     let status =
         hyper::StatusCode::from_u16(asset.status_code).expect("invalid status code at compile time");
     let mut resp = hyper::Response::new(());
     *resp.status_mut() = status;
     let headers = resp.headers_mut();
-    // +1 for the Content-Length header we add below.
-    headers.reserve(asset.headers.len() + 1);
+    // Reserve for static headers + Content-Length + Content-Encoding (if not identity).
+    let extra = 1 + if encoding != ContentEncoding::Identity { 1 } else { 0 };
+    headers.reserve(asset.headers.len() + extra);
     for &(name, value) in asset.headers {
         headers.insert(
             hyper::header::HeaderName::from_static(name),
             hyper::header::HeaderValue::from_static(value),
         );
     }
+    let cl = response::content_length_for_encoding(asset, encoding);
     headers.insert(
         hyper::header::CONTENT_LENGTH,
-        hyper::header::HeaderValue::from_static(asset.content_length_str),
+        hyper::header::HeaderValue::from_str(&cl.to_string()).expect("content-length should be valid"),
     );
+    if let Some(ce_val) = encoding.header_value() {
+        headers.insert(
+            hyper::header::CONTENT_ENCODING,
+            hyper::header::HeaderValue::from_static(ce_val),
+        );
+    }
     resp
 }
 

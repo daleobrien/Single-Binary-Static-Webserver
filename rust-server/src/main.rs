@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let summary_mode = std::env::args().any(|arg| arg == "--summary");
     startup::print_banner(port, num_workers, ALL_ASSETS.len(), summary_mode);
+    startup::print_assets_table();
 
     rustls::crypto::ring::default_provider()
         .install_default()

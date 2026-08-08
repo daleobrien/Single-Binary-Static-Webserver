@@ -20,6 +20,7 @@ else
         echo "$TEST_OUTPUT"
         exit 1
     fi
+    export DISABLE_LOGGING=false
     cargo build --release
 
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')

@@ -51,6 +51,12 @@ mod codegen_tests {
             version_use_zstd: false,
             uncompressed_lengths: vec![1024],
             version_uncompressed_len: 9,
+            gzip_lengths: vec![500],
+            brotli_lengths: vec![450],
+            zstd_lengths: vec![430],
+            version_gzip_len: 50,
+            version_brotli_len: 30,
+            version_zstd_len: 25,
         }
     }
 

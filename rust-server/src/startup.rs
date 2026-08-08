@@ -1,4 +1,21 @@
 use crate::config::HOSTNAME;
+use crate::ALL_ASSETS;
+
+/// Format a byte count as a human-readable string (e.g. "1.2 KB").
+fn format_bytes(bytes: usize) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit_idx])
+    }
+}
 
 /// Prints the CLI help message to stderr and exits.
 pub(crate) fn print_help() -> ! {
@@ -39,4 +56,53 @@ pub(crate) fn print_banner(port: u16, num_workers: usize, num_assets: usize, sum
         elog!("  Log: req/s reported every 5s");
     }
     elog!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
+/// Prints a table of all embedded assets showing the route/file, plain size,
+/// and the size after each compression algorithm (gzip, brotli, zstd).
+pub(crate) fn print_assets_table() {
+    elog!();
+    elog!(
+        "{:<36} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "Route / File", "Plain", "Gzip", "Brotli", "Zstd", "Served"
+    );
+    elog!("{:-<81}", "");
+
+    for asset in ALL_ASSETS {
+        // Determine which compression is served and compute the served size.
+        let served = asset.content_length;
+
+        elog!(
+            "{:<36} {:>9} {:>9} {:>9} {:>9} {:>9}",
+            asset.file,
+            format_bytes(asset.uncompressed_length),
+            format_bytes(asset.gzip_length),
+            format_bytes(asset.brotli_length),
+            format_bytes(asset.zstd_length),
+            format_bytes(served),
+        );
+    }
+
+    // ── Totals ─────────────────────────────────────────────────────
+    let total_plain: usize = ALL_ASSETS.iter().map(|a| a.uncompressed_length).sum();
+    let total_gzip: usize = ALL_ASSETS.iter().map(|a| a.gzip_length).sum();
+    let total_brotli: usize = ALL_ASSETS.iter().map(|a| a.brotli_length).sum();
+    let total_zstd: usize = ALL_ASSETS.iter().map(|a| a.zstd_length).sum();
+    let total_served: usize = ALL_ASSETS.iter().map(|a| a.content_length).sum();
+
+    elog!("{:-<81}", "");
+    elog!(
+        "{:<36} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "TOTAL",
+        format_bytes(total_plain),
+        format_bytes(total_gzip),
+        format_bytes(total_brotli),
+        format_bytes(total_zstd),
+        format_bytes(total_served),
+    );
+    if total_plain > 0 {
+        let ratio = (total_served as f64 / total_plain as f64) * 100.0;
+        elog!("Overall compression: {:.1}% of plain size", ratio);
+    }
+    elog!();
 }

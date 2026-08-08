@@ -28,6 +28,9 @@ pub(super) fn build_asset_metadata(
     Vec<bool>,
     Option<String>,
     Vec<usize>,
+    Vec<usize>,
+    Vec<usize>,
+    Vec<usize>,
 ) {
     let mut header_sets: Vec<Vec<(String, String)>> = Vec::new();
     let mut header_set_index: HashMap<String, usize> = HashMap::new();
@@ -41,6 +44,9 @@ pub(super) fn build_asset_metadata(
     let mut max_path_len: usize = 0;
     let mut max_size: usize = 0;
     let mut uncompressed_lengths: Vec<usize> = Vec::with_capacity(files.len());
+    let mut gzip_lengths: Vec<usize> = Vec::with_capacity(files.len());
+    let mut brotli_lengths: Vec<usize> = Vec::with_capacity(files.len());
+    let mut zstd_lengths: Vec<usize> = Vec::with_capacity(files.len());
 
     for file in files {
         let content_type = utils::mime_for_file(file);
@@ -83,6 +89,10 @@ pub(super) fn build_asset_metadata(
         use_uncompressed.push(use_uncomp);
         use_brotli.push(use_br);
         use_zstd.push(use_zst);
+
+        gzip_lengths.push(gz_data.len());
+        brotli_lengths.push(br_data.len());
+        zstd_lengths.push(zst_data.len());
 
         let (body_data, content_length) = if use_uncomp {
             let raw_path = format!("{gz_path}.raw");
@@ -169,5 +179,8 @@ pub(super) fn build_asset_metadata(
         use_zstd,
         not_found_const_prefix,
         uncompressed_lengths,
+        gzip_lengths,
+        brotli_lengths,
+        zstd_lengths,
     )
 }

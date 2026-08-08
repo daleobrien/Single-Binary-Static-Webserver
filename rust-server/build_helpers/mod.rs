@@ -131,6 +131,9 @@ pub fn run() {
         use_zstd,
         not_found_const_prefix,
         uncompressed_lengths,
+        gzip_lengths,
+        brotli_lengths,
+        zstd_lengths,
     ) = build_asset_metadata(
         &files,
         &gzip_dir,
@@ -145,7 +148,7 @@ pub fn run() {
     );
 
     // ── Version asset ──
-    let (version_header_idx, version_len, version_use_uncompressed, version_use_brotli, version_use_zstd, mut header_sets, version_uncompressed_len) =
+    let (version_header_idx, version_len, version_use_uncompressed, version_use_brotli, version_use_zstd, mut header_sets, version_uncompressed_len, version_gzip_len, version_brotli_len, version_zstd_len) =
         build_version_headers(&build_version, &gzip_dir, &br_dir, &zst_dir, header_sets);
 
     let not_found_header_idx = if !has_404 {
@@ -182,6 +185,12 @@ pub fn run() {
         version_use_zstd,
         uncompressed_lengths,
         version_uncompressed_len,
+        gzip_lengths,
+        brotli_lengths,
+        zstd_lengths,
+        version_gzip_len,
+        version_brotli_len,
+        version_zstd_len,
     };
     generate(&ctx);
 }

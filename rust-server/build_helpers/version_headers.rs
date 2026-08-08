@@ -9,7 +9,7 @@ pub(super) fn build_version_headers(
     br_dir: &str,
     zst_dir: &str,
     mut header_sets: Vec<Vec<(String, String)>>,
-) -> (usize, usize, bool, bool, bool, Vec<Vec<(String, String)>>, usize) {
+) -> (usize, usize, bool, bool, bool, Vec<Vec<(String, String)>>, usize, usize, usize, usize) {
     let version_body = build_version.as_bytes().to_vec();
     let version_gz_path = format!("{gzip_dir}/v.txt.gz");
     utils::compress_to_gzip(&version_body, &version_gz_path);
@@ -85,6 +85,10 @@ pub(super) fn build_version_headers(
             i
         });
 
+    let version_gzip_len = version_gz_data.len();
+    let version_brotli_len = version_br_data.len();
+    let version_zstd_len = version_zst_data.len();
+
     (
         version_header_idx,
         version_len,
@@ -93,5 +97,8 @@ pub(super) fn build_version_headers(
         version_use_zstd,
         header_sets,
         version_body.len(),
+        version_gzip_len,
+        version_brotli_len,
+        version_zstd_len,
     )
 }
